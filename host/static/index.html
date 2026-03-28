@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Marathon 总览</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23111111'/%3E%3Ctext x='50%25' y='54%25' dominant-baseline='middle' text-anchor='middle' font-size='32' fill='%23f6f3ec' font-family='Helvetica'%3EM%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+  <script src="/dashboard.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <h1>Marathon 总览</h1>
+      <p>桌面首页只负责挑重点、排顺序、给你一个入口。真正的长内容和逐轮展开，都留到容器详情页里看。</p>
+    </div>
+    <div class="topbar-links">
+      <a class="nav-link current" href="/">总览</a>
+      <a class="nav-link" href="/new">新建任务</a>
+      <a class="nav-link" href="/sandboxes">容器列表</a>
+      <a class="nav-link" href="/agents">AI 账号</a>
+      <a class="nav-link" href="/design-lab/index.html">设计实验室</a>
+      <span class="nav-link" id="serverTime">-</span>
+    </div>
+  </header>
+
+  <main class="page">
+    <section class="section">
+      <div class="browser-toolbar">
+        <div class="browser-filters" id="filterTabs" role="tablist" aria-label="筛选容器">
+          <button class="browser-filter" type="button" data-filter="all" aria-pressed="true">全部</button>
+          <button class="browser-filter" type="button" data-filter="running" aria-pressed="false">正在运行</button>
+          <button class="browser-filter" type="button" data-filter="recent" aria-pressed="false">最近活跃</button>
+        </div>
+        <div class="browser-actions">
+          <button id="refreshBtn">刷新</button>
+          <a class="nav-link button-primary" href="/new">新建任务</a>
+        </div>
+      </div>
+      <p class="section-copy" id="filterSubtitle">正在显示全部容器。</p>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <h2>当前重点</h2>
+          <p class="section-copy" id="featuredSubtitle">先把今天最值得点开的容器摆上桌面。</p>
+        </div>
+      </div>
+      <div class="featured-row" id="featuredRow"></div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <h2>最近活跃</h2>
+          <p class="section-copy" id="gridSubtitle">剩下的容器收成统一浏览卡，扫一眼就知道要不要点进去。</p>
+        </div>
+      </div>
+      <div class="browse-grid" id="containerGrid"></div>
+    </section>
+  </main>
+</body>
+</html>

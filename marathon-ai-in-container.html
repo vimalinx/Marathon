@@ -1,0 +1,692 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Marathon · AI 如何在容器里跑</title>
+  <style>
+    :root {
+      --bg: #f4ede2;
+      --card: rgba(255, 252, 246, 0.92);
+      --card-2: #f7f0e4;
+      --line: #d8cebb;
+      --ink: #181818;
+      --muted: #655f56;
+      --blue: #345f9d;
+      --green: #2f8151;
+      --amber: #b47a18;
+      --red: #9f433c;
+      --shadow: 0 18px 40px rgba(24, 24, 24, 0.08);
+      --radius: 22px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background:
+        radial-gradient(circle at top left, rgba(52, 95, 157, 0.10), transparent 22rem),
+        radial-gradient(circle at top right, rgba(47, 129, 81, 0.08), transparent 18rem),
+        linear-gradient(180deg, #f8f3ea 0%, #efe5d8 100%);
+      color: var(--ink);
+      font-family: "IBM Plex Sans", "Avenir Next", "Helvetica Neue", sans-serif;
+      line-height: 1.58;
+    }
+
+    body { padding: 28px; }
+
+    .shell {
+      max-width: 1240px;
+      margin: 0 auto;
+      display: grid;
+      gap: 22px;
+    }
+
+    .hero,
+    .card,
+    .table-card {
+      background: var(--card);
+      border: 1px solid rgba(216, 206, 187, 0.95);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(10px);
+    }
+
+    .hero {
+      padding: 28px;
+      display: grid;
+      gap: 20px;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      width: fit-content;
+      padding: 7px 12px;
+      border-radius: 999px;
+      background: #eee5d6;
+      color: var(--muted);
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    h1, h2, h3, h4, p { margin: 0; }
+
+    h1 {
+      font-size: clamp(2.3rem, 4vw, 4rem);
+      line-height: 0.94;
+      letter-spacing: -0.05em;
+      max-width: 11ch;
+    }
+
+    .lead {
+      max-width: 72ch;
+      color: var(--muted);
+      font-size: 1.03rem;
+    }
+
+    .hero-grid,
+    .layout-2,
+    .summary-grid,
+    .flow-grid,
+    .risk-grid {
+      display: grid;
+      gap: 16px;
+    }
+
+    .hero-grid { grid-template-columns: 1.65fr 1fr; }
+    .layout-2 { grid-template-columns: 1.2fr 1fr; }
+    .summary-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .flow-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .risk-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+    .metric,
+    .mini-card,
+    .flow-step,
+    .risk-card,
+    .list-item {
+      background: var(--card-2);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+    }
+
+    .metric,
+    .mini-card,
+    .risk-card,
+    .list-item,
+    .flow-step {
+      padding: 16px;
+    }
+
+    .metric {
+      display: grid;
+      gap: 8px;
+      min-height: 128px;
+    }
+
+    .metric-label {
+      font-size: 13px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .metric-value {
+      font-size: 2rem;
+      line-height: 0.95;
+      letter-spacing: -0.04em;
+    }
+
+    .metric-note,
+    .muted {
+      color: var(--muted);
+    }
+
+    .card,
+    .table-card {
+      padding: 22px;
+    }
+
+    .section-head {
+      display: grid;
+      gap: 6px;
+      margin-bottom: 18px;
+    }
+
+    .tag-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .tag,
+    .status {
+      display: inline-flex;
+      align-items: center;
+      width: fit-content;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 0.88rem;
+      font-weight: 600;
+    }
+
+    .tag {
+      border: 1px solid var(--line);
+      background: #faf5eb;
+      color: var(--muted);
+    }
+
+    .status.info { background: rgba(52, 95, 157, 0.12); color: var(--blue); }
+    .status.good { background: rgba(47, 129, 81, 0.12); color: var(--green); }
+    .status.warn { background: rgba(180, 122, 24, 0.14); color: var(--amber); }
+    .status.bad { background: rgba(159, 67, 60, 0.12); color: var(--red); }
+
+    .stack,
+    .list {
+      display: grid;
+      gap: 14px;
+    }
+
+    .list-item {
+      display: grid;
+      gap: 4px;
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .flow-step {
+      display: grid;
+      gap: 8px;
+      min-height: 180px;
+    }
+
+    .step-no {
+      width: 32px;
+      height: 32px;
+      display: grid;
+      place-items: center;
+      border-radius: 999px;
+      background: #171717;
+      color: #faf8f3;
+      font-size: 0.86rem;
+      font-weight: 700;
+    }
+
+    .arrow {
+      text-align: center;
+      color: var(--muted);
+      font-size: 1.6rem;
+      line-height: 1;
+      padding: 2px 0 0;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.95rem;
+    }
+
+    th, td {
+      text-align: left;
+      vertical-align: top;
+      padding: 12px 10px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    th {
+      font-size: 0.84rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    code {
+      font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+      font-size: 0.92em;
+      background: #efe5d5;
+      padding: 2px 6px;
+      border-radius: 8px;
+      word-break: break-word;
+    }
+
+    pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: #181818;
+      color: #f7f4ee;
+      padding: 16px;
+      border-radius: 16px;
+      font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+      font-size: 0.9rem;
+      line-height: 1.5;
+    }
+
+    .footer-note {
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    @media (max-width: 1040px) {
+      .hero-grid,
+      .layout-2,
+      .summary-grid,
+      .flow-grid,
+      .split,
+      .risk-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <section class="hero">
+      <div class="eyebrow">Marathon · In-Container Agent Runtime</div>
+      <div class="hero-grid">
+        <div class="stack">
+          <h1>AI 现在是怎么在容器里跑起来的</h1>
+          <p class="lead">
+            现在这套系统不是“宿主机上的 AI 去远程操纵容器”，而是
+            <strong>AI 主循环本身就在容器里面运行</strong>。
+            宿主机只做准备容器、同步 agent 文件、启动进程、镜像日志和提供 Web UI 控制面。
+          </p>
+          <div class="tag-row">
+            <span class="tag">AI 主体在容器内</span>
+            <span class="tag">唯一工具是命令执行</span>
+            <span class="tag">每轮都写日志</span>
+            <span class="tag">宿主机只围观 + 控制</span>
+          </div>
+        </div>
+        <div class="mini-card">
+          <div class="section-head">
+            <h3>一句话链路</h3>
+            <p class="muted">先准备容器，再把 agent 放进去，然后在容器里自己循环。</p>
+          </div>
+          <pre>Web UI / script
+  -> host.orchestrator
+  -> lxc-attach into container
+  -> start python3 /opt/marathon/agent_loop.py
+  -> agent_loop calls model
+  -> agent_loop calls agent_tools
+  -> command runs in /workspace/sandbox
+  -> round logs written to /workspace/runtime-log/&lt;run_id&gt;
+  -> host mirrors logs back to runs/&lt;run_id&gt;</pre>
+        </div>
+      </div>
+      <div class="summary-grid">
+        <article class="metric">
+          <div class="metric-label">容器内主循环</div>
+          <div class="metric-value">agent_loop</div>
+          <div class="metric-note">文件是 <code>container/agent_loop.py</code>，同步进容器后放在 <code>/opt/marathon/agent_loop.py</code>。</div>
+        </article>
+        <article class="metric">
+          <div class="metric-label">容器内唯一工具</div>
+          <div class="metric-value">agent_tools</div>
+          <div class="metric-note">AI 只会得到一个工具：执行一条命令，并拿回 JSON 结果。</div>
+        </article>
+        <article class="metric">
+          <div class="metric-label">真正工作目录</div>
+          <div class="metric-value">sandbox</div>
+          <div class="metric-note">命令默认在 <code>/workspace/sandbox</code> 里跑，这也是 agent 真正修改文件的地方。</div>
+        </article>
+        <article class="metric">
+          <div class="metric-label">轮次日志目录</div>
+          <div class="metric-value">runtime-log</div>
+          <div class="metric-note">每个 run 会写到 <code>/workspace/runtime-log/&lt;run_id&gt;/</code>，宿主机会镜像回来。</div>
+        </article>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="section-head">
+        <h2>完整启动流程</h2>
+        <p>从点按钮到 AI 真正在容器里执行命令，中间大致会经过这几步。</p>
+      </div>
+      <div class="flow-grid">
+        <article class="flow-step">
+          <div class="step-no">1</div>
+          <h3>准备基础容器</h3>
+          <p class="muted">
+            通过 <code>scripts/create_base_container.sh</code> 创建 base 容器。
+            这一步会装好 <code>python3</code>、<code>git</code>，创建 <code>/opt/marathon</code>、
+            <code>/workspace/sandbox</code>、<code>/workspace/runtime-log</code>。
+          </p>
+        </article>
+        <article class="flow-step">
+          <div class="step-no">2</div>
+          <h3>把 agent 文件同步进容器</h3>
+          <p class="muted">
+            Web UI 或启动脚本会把本地的 <code>container/agent_loop.py</code>、
+            <code>container/agent_tools.py</code> 和 <code>prompts/minimal_system.txt</code>
+            写进容器的 <code>/opt/marathon/</code>。
+          </p>
+        </article>
+        <article class="flow-step">
+          <div class="step-no">3</div>
+          <h3>宿主机启动容器内 agent 进程</h3>
+          <p class="muted">
+            <code>host/orchestrator.py</code> 用 <code>sudo -n lxc-attach</code> 进入容器，
+            然后用一个 Python launcher 在容器里 <code>subprocess.Popen(['python3', '/opt/marathon/agent_loop.py'])</code>。
+          </p>
+        </article>
+        <article class="flow-step">
+          <div class="step-no">4</div>
+          <h3>agent_loop 在容器里无限轮询</h3>
+          <p class="muted">
+            主循环读取 prompt、采集 sandbox 状态、拼消息、调用模型、解析动作、执行工具、写 round 日志、提交 sandbox git。
+          </p>
+        </article>
+      </div>
+      <div class="arrow">↓</div>
+      <div class="flow-grid">
+        <article class="flow-step">
+          <div class="step-no">5</div>
+          <h3>模型返回下一步动作</h3>
+          <p class="muted">
+            模型被要求只输出一个 JSON 对象，至少包含 <code>summary</code>、<code>argv</code>、<code>timeout</code>。
+          </p>
+        </article>
+        <article class="flow-step">
+          <div class="step-no">6</div>
+          <h3>agent_tools 执行命令</h3>
+          <p class="muted">
+            <code>agent_loop</code> 并不直接 <code>subprocess.run</code> 用户动作，
+            它会调用 <code>agent_tools.py</code>，由工具在 <code>/workspace/sandbox</code> 执行命令并返回 JSON。
+          </p>
+        </article>
+        <article class="flow-step">
+          <div class="step-no">7</div>
+          <h3>容器内写回 round 产物</h3>
+          <p class="muted">
+            每轮都会生成 <code>request.json</code>、<code>response.txt</code>、
+            <code>action.json</code>、<code>tool_result.json</code>、<code>state_before.json</code>、
+            <code>state_after.json</code> 等文件。
+          </p>
+        </article>
+        <article class="flow-step">
+          <div class="step-no">8</div>
+          <h3>宿主机同步镜像日志</h3>
+          <p class="muted">
+            宿主侧 orchestrator 会持续把关键文件从容器里拷回 <code>runs/&lt;run_id&gt;</code>，
+            Web UI 再读这些文件来展示状态、最近动作、最近轮次和实时轨迹。
+          </p>
+        </article>
+      </div>
+    </section>
+
+    <section class="layout-2">
+      <article class="card">
+        <div class="section-head">
+          <h2>容器里到底有什么</h2>
+          <p>AI 真正依赖的是下面这些路径。</p>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>路径</th>
+              <th>作用</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>/opt/marathon/agent_loop.py</code></td>
+              <td>AI 的主循环程序，负责每轮调模型、解析动作、执行工具、写日志。</td>
+            </tr>
+            <tr>
+              <td><code>/opt/marathon/agent_tools.py</code></td>
+              <td>AI 唯一能直接调用的外部能力，执行一条命令。</td>
+            </tr>
+            <tr>
+              <td><code>/opt/marathon/minimal_system.txt</code></td>
+              <td>system prompt，被容器内主循环读取。</td>
+            </tr>
+            <tr>
+              <td><code>/workspace/sandbox</code></td>
+              <td>AI 真正工作的目录，命令默认在这里执行，文件修改也落在这里。</td>
+            </tr>
+            <tr>
+              <td><code>/workspace/runtime-log/&lt;run_id&gt;</code></td>
+              <td>每轮运行的日志、状态、动作、模型回复和 live stdout/stderr。</td>
+            </tr>
+            <tr>
+              <td><code>/workspace/sandbox/.git</code></td>
+              <td>容器内 sandbox 自己有 git，AI 每轮动作后会 commit 当前沙盒状态。</td>
+            </tr>
+          </tbody>
+        </table>
+      </article>
+
+      <article class="card">
+        <div class="section-head">
+          <h2>容器外的配合方</h2>
+          <p>AI 虽然在容器里跑，但容器外还有两个关键角色。</p>
+        </div>
+        <div class="list">
+          <div class="list-item">
+            <span class="status info">宿主机 orchestrator</span>
+            <p>负责启动容器内 agent、写 STOP 信号、同步日志、做宿主镜像提交。</p>
+          </div>
+          <div class="list-item">
+            <span class="status info">Web UI</span>
+            <p>负责管理容器和 run。它不直接替 AI 思考，只是发起启动并读取镜像出来的状态文件。</p>
+          </div>
+          <div class="list-item">
+            <span class="status good">模型接口</span>
+            <p>容器本身要能访问模型 API，因为调用模型的是容器内的 <code>agent_loop.py</code>，不是宿主机。</p>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <section class="card">
+      <div class="section-head">
+        <h2>每一轮 inside-container loop 在做什么</h2>
+        <p>这是最关键的部分。你如果想理解“AI 怎么在容器里跑”，核心就在这里。</p>
+      </div>
+      <div class="split">
+        <div class="mini-card">
+          <h3>轮开始前</h3>
+          <div class="list">
+            <div class="list-item">
+              <strong>采集当前状态</strong>
+              <p>扫描 sandbox 文件树、读取 sandbox git status，同时把 prompt、tool 源码、loop 源码都读出来。</p>
+            </div>
+            <div class="list-item">
+              <strong>拿最近反馈</strong>
+              <p>读取上一轮的 <code>latest_action.json</code> 和 <code>latest_tool_result.json</code>，再取最近几轮 events。</p>
+            </div>
+            <div class="list-item">
+              <strong>拼消息给模型</strong>
+              <p>system 是 prompt 文件，user 内容是一个 JSON 包：当前轮次、任务提示、最近几轮、上次动作、上次工具结果、当前 sandbox 状态。</p>
+            </div>
+          </div>
+        </div>
+        <div class="mini-card">
+          <h3>轮执行中</h3>
+          <div class="list">
+            <div class="list-item">
+              <strong>调用模型</strong>
+              <p>向 <code>/chat/completions</code> 发请求，模型配置里可以带 <code>reasoning_effort</code>、<code>temperature</code> 等。</p>
+            </div>
+            <div class="list-item">
+              <strong>提取 JSON 动作</strong>
+              <p>如果模型没有干净地只输出 JSON，主循环会尝试从文本里抽出一个 JSON object。</p>
+            </div>
+            <div class="list-item">
+              <strong>执行工具</strong>
+              <p>把动作 JSON 丢给 <code>agent_tools.py</code>，由它在 sandbox 执行 <code>argv</code>。</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="arrow">↓</div>
+      <div class="split">
+        <div class="mini-card">
+          <h3>轮结束时</h3>
+          <div class="list">
+            <div class="list-item">
+              <strong>再次采集状态</strong>
+              <p>得到 <code>state_after</code>，这样系统能知道这轮命令前后沙盒和 agent 自己有没有变化。</p>
+            </div>
+            <div class="list-item">
+              <strong>写 round 文件</strong>
+              <p>把 request、response、action、tool result、before/after state 全写入当前 round 目录。</p>
+            </div>
+            <div class="list-item">
+              <strong>更新 live 文件</strong>
+              <p>例如 <code>latest_action.json</code>、<code>latest_tool_result.json</code>、<code>latest_response.txt</code>。</p>
+            </div>
+          </div>
+        </div>
+        <div class="mini-card">
+          <h3>轮提交与状态更新</h3>
+          <div class="list">
+            <div class="list-item">
+              <strong>写 events.jsonl</strong>
+              <p>记录 <code>round_completed</code> 或 <code>round_failed</code> 事件，给宿主和 UI 看。</p>
+            </div>
+            <div class="list-item">
+              <strong>提交 sandbox git</strong>
+              <p>每轮会对 <code>/workspace/sandbox</code> 做一次 git commit，这样 agent 的工作区变更是轮次化的。</p>
+            </div>
+            <div class="list-item">
+              <strong>更新 status.json</strong>
+              <p>记录当前状态、完成轮数、最后摘要、最后命令返回码等。</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="table-card">
+      <div class="section-head">
+        <h2>关键文件各自扮演什么角色</h2>
+        <p>你如果要继续改这个项目，这张表最有用。</p>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>文件</th>
+            <th>角色</th>
+            <th>你改它会影响什么</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>scripts/create_base_container.sh</code></td>
+            <td>初始化 base 容器</td>
+            <td>影响容器里预装什么、网络怎么配、初始 sandbox 长什么样。</td>
+          </tr>
+          <tr>
+            <td><code>scripts/start_run.sh</code></td>
+            <td>快速复制容器并启动一次 run</td>
+            <td>影响“命令行启动一次实验”的体验。</td>
+          </tr>
+          <tr>
+            <td><code>host/orchestrator.py</code></td>
+            <td>宿主侧 supervisor</td>
+            <td>影响容器内进程怎么被启动、怎么同步日志、怎么处理 STOP。</td>
+          </tr>
+          <tr>
+            <td><code>container/agent_loop.py</code></td>
+            <td>容器内 agent 的脑干</td>
+            <td>影响每轮 prompt、状态采样、模型调用、结果解析和 round 日志格式。</td>
+          </tr>
+          <tr>
+            <td><code>container/agent_tools.py</code></td>
+            <td>容器内唯一工具</td>
+            <td>影响 agent 允许执行什么、在哪执行、结果如何返回。</td>
+          </tr>
+          <tr>
+            <td><code>host/web_ui.py</code></td>
+            <td>宿主 Web 控制面</td>
+            <td>影响页面能不能创建 run、查看状态、停止任务和观察轨迹。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="layout-2">
+      <article class="card">
+        <div class="section-head">
+          <h2>为什么这叫“AI 在容器里跑”，不是“容器里只有工作区”</h2>
+          <p>这两种架构差别很大。</p>
+        </div>
+        <div class="list">
+          <div class="list-item">
+            <strong>调用模型的是容器内进程</strong>
+            <p>不是宿主机拿到模型结果后再去替容器执行命令。</p>
+          </div>
+          <div class="list-item">
+            <strong>执行命令的是容器内工具</strong>
+            <p><code>agent_tools.py</code> 运行在容器里，默认 cwd 是 <code>/workspace/sandbox</code>。</p>
+          </div>
+          <div class="list-item">
+            <strong>主循环源码本身也在容器里</strong>
+            <p>它甚至可以读到自己的源代码和工具源码，系统还专门跟踪这些源码有没有被 agent 改动。</p>
+          </div>
+          <div class="list-item">
+            <strong>坏掉的是这个 run 容器，不是整个宿主链路</strong>
+            <p>这正是实验平台想要的边界：agent 可以把自己搞坏，但最好只坏在这个容器里。</p>
+          </div>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="section-head">
+          <h2>当前这条链路最脆的地方</h2>
+          <p>知道它怎么跑，也要知道它在哪最容易断。</p>
+        </div>
+        <div class="risk-grid">
+          <div class="risk-card">
+            <span class="status bad">1</span>
+            <strong>模型输出 JSON 不稳定</strong>
+            <p>如果模型回复不是干净 JSON，主循环可能直接失败。这是现阶段 inside-container loop 最现实的中断点。</p>
+          </div>
+          <div class="risk-card">
+            <span class="status warn">2</span>
+            <strong>容器必须能访问模型 API</strong>
+            <p>因为调用模型的是容器内进程，不是宿主机，所以网络一断就不是“观测不到”，而是 agent 根本跑不动。</p>
+          </div>
+          <div class="risk-card">
+            <span class="status warn">3</span>
+            <strong>宿主依赖 LXC / sudo / bridge</strong>
+            <p>容器怎么建、怎么起、怎么 attach，全部依赖宿主机这套环境。</p>
+          </div>
+          <div class="risk-card">
+            <span class="status warn">4</span>
+            <strong>agent 可以修改自己</strong>
+            <p>这是实验功能，也是风险点。它可以把 <code>agent_loop.py</code> 或 <code>agent_tools.py</code> 改坏。</p>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <section class="card">
+      <div class="section-head">
+        <h2>最后一句总结</h2>
+        <p>如果你只想抓住主线，就记下面这句话。</p>
+      </div>
+      <pre>Marathon 现在的运行方式是：
+宿主机先准备容器并把 agent 文件同步进去，
+然后在容器里启动 python3 /opt/marathon/agent_loop.py。
+
+从那一刻开始：
+- 调模型的是容器里的 agent_loop
+- 执行命令的是容器里的 agent_tools
+- 真正被修改的是容器里的 /workspace/sandbox
+- 真正被记录的是容器里的 /workspace/runtime-log/&lt;run_id&gt;
+- 宿主机只负责同步镜像、展示 UI、发停止信号和管理容器生命周期</pre>
+      <p class="footer-note">
+        这份页面是聚焦版说明页，专门解释“AI 怎么在容器里跑”。如果你要，我下一步可以把这条运行链路再画成更细的时序图版本。
+      </p>
+    </section>
+  </div>
+</body>
+</html>

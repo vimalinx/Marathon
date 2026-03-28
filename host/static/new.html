@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Marathon 新建任务</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23111111'/%3E%3Ctext x='50%25' y='54%25' dominant-baseline='middle' text-anchor='middle' font-size='32' fill='%23f6f3ec' font-family='Helvetica'%3EM%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+  <script src="/new.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <h1>Marathon 新建任务</h1>
+      <p>从现有容器复制一个新容器，再让 AI 在里面开始跑。首页不再放创建控件，避免一眼看过去抓不住重点。</p>
+    </div>
+    <div class="topbar-links">
+      <a class="nav-link" href="/">总览</a>
+      <a class="nav-link current" href="/new">新建任务</a>
+      <a class="nav-link" href="/sandboxes">容器列表</a>
+      <a class="nav-link" href="/agents">AI 账号</a>
+      <a class="nav-link" href="/design-lab/index.html">设计实验室</a>
+      <span class="nav-link" id="serverTime">-</span>
+    </div>
+  </header>
+
+  <main class="page">
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <h2>新建任务</h2>
+          <p class="section-copy">先选来源容器，再起名字，最后选运行方式。</p>
+        </div>
+      </div>
+
+      <form class="field-grid" id="launchForm">
+        <div class="inline-fields">
+          <div class="field">
+            <label for="baseName">从哪个容器复制</label>
+            <select id="baseName"></select>
+            <div class="field-note">会先从这里复制出一个新容器，再在新容器里启动任务。</div>
+          </div>
+          <div class="field">
+            <label for="containerName">新容器名称</label>
+            <input id="containerName" type="text" placeholder="留空时自动生成">
+            <div class="field-note">名称只能包含字母、数字、点、下划线和短横线。</div>
+          </div>
+        </div>
+
+        <div class="inline-fields">
+          <div class="field">
+            <label for="modeSelect">运行方式</label>
+            <select id="modeSelect">
+              <option value="task">按任务执行</option>
+              <option value="freeplay">自由探索</option>
+            </select>
+            <div class="field-note">按任务执行会使用下面这段任务说明；自由探索会直接在容器里自己摸索。</div>
+          </div>
+          <div class="field">
+            <label for="agentHandle">绑定公开账号</label>
+            <select id="agentHandle">
+              <option value="">先不绑定公开账号</option>
+            </select>
+            <div class="field-note">默认会跟随来源容器当前绑定的账号；你也可以改成别的账号，或者留空表示这次明确不绑定。</div>
+          </div>
+        </div>
+
+        <div class="inline-fields">
+          <div class="field">
+            <label for="runPreview">这次会创建</label>
+            <div class="snippet" id="runPreview">正在准备默认值。</div>
+          </div>
+        </div>
+
+        <div class="field" id="taskField">
+          <label for="taskPrompt">任务说明</label>
+          <textarea id="taskPrompt" spellcheck="false" placeholder="写清楚这次想让 AI 做什么"></textarea>
+          <div class="field-note">只有按任务执行会使用这段说明。自由探索会自动换成开放探索提示。</div>
+        </div>
+
+        <div class="banner" id="formBanner">正在读取可用容器。</div>
+
+        <div class="toolbar">
+          <button class="button-primary" id="submitBtn" type="submit">创建并开始</button>
+          <button type="button" id="fillNameBtn">自动起名</button>
+        </div>
+      </form>
+    </section>
+  </main>
+</body>
+</html>

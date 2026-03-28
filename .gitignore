@@ -1,0 +1,14 @@
+runs/
+__pycache__/
+*.pyc
+container/__pycache__/
+host/__pycache__/
+state/
+.pytest_cache/
+.playwright-cli/
+.benchmarks/
+host-runs/
+output/
+findings.md
+progress.md
+task_plan.md

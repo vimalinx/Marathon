@@ -1,0 +1,217 @@
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+}
+
+a {
+  color: inherit;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+.muted {
+  color: #5f6b76;
+}
+
+.card {
+  border: 1px solid #d8dee4;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 16px;
+}
+
+.card h1,
+.card h2,
+.card h3,
+.card h4,
+.card p,
+.card pre,
+.card ul,
+.card ol,
+.card dl {
+  margin-top: 0;
+}
+
+.card-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.section-header {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.section-header h2,
+.section-header p {
+  margin: 0;
+}
+
+.section-lead {
+  margin: 0;
+  font-size: 1.05rem;
+  line-height: 1.55;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.stat-card {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid #e1e5ea;
+  border-radius: 10px;
+  background: #f8fafb;
+}
+
+.stat-label,
+.detail-label {
+  font-size: 12px;
+  color: #5f6b76;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.stat-value {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.stat-note {
+  margin: 0;
+  color: #5f6b76;
+  font-size: 13px;
+}
+
+.meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.feed-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.feed-item {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #e1e5ea;
+  border-radius: 10px;
+  background: #f8fafb;
+}
+
+.feed-item p {
+  margin: 0;
+}
+
+.detail-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.detail-grid-columns {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.detail-panel {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #e1e5ea;
+  border-radius: 10px;
+  background: #f8fafb;
+}
+
+.detail-panel p,
+.detail-panel pre {
+  margin: 0;
+}
+
+.detail-text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #24303b;
+}
+
+.pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border: 1px solid #d8dee4;
+  border-radius: 999px;
+  background: #f6f8fa;
+  color: #5f6b76;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.pill-good {
+  color: #216e39;
+}
+
+.pill-warn {
+  color: #8a5a00;
+}
+
+.pill-bad {
+  color: #b42318;
+}
+
+.state-block {
+  border: 1px dashed #d8dee4;
+  border-radius: 10px;
+  background: #f6f8fa;
+  padding: 14px 16px;
+}
+
+.utility-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.utility-gap-sm {
+  gap: 8px;
+}
+
+.utility-gap-md {
+  gap: 16px;
+}
+
+.utility-mt-lg {
+  margin-top: 24px;
+}
+
+.utility-hidden {
+  display: none !important;
+}

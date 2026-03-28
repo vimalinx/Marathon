@@ -1,0 +1,901 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Marathon 仓库分析报告</title>
+  <style>
+    :root {
+      --bg: #f2ede3;
+      --paper: #fffdf8;
+      --paper-2: #f6f1e6;
+      --ink: #171717;
+      --muted: #625d54;
+      --line: #d4ccbd;
+      --green: #2d7c4a;
+      --amber: #b77811;
+      --red: #a13e36;
+      --blue: #3c5e9c;
+      --shadow: 0 18px 44px rgba(23, 23, 23, 0.08);
+      --radius: 20px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background:
+        radial-gradient(circle at top left, rgba(60, 94, 156, 0.10), transparent 22rem),
+        radial-gradient(circle at top right, rgba(45, 124, 74, 0.08), transparent 18rem),
+        linear-gradient(180deg, #f7f2e9 0%, #efe7da 100%);
+      color: var(--ink);
+      font-family: "IBM Plex Sans", "Avenir Next", "Helvetica Neue", sans-serif;
+      line-height: 1.55;
+    }
+
+    body { padding: 28px; }
+
+    .shell {
+      max-width: 1280px;
+      margin: 0 auto;
+      display: grid;
+      gap: 22px;
+    }
+
+    .hero,
+    .card,
+    .panel,
+    .table-card {
+      background: rgba(255, 253, 248, 0.88);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(212, 204, 189, 0.9);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    .hero {
+      padding: 28px;
+      display: grid;
+      gap: 18px;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      width: fit-content;
+      padding: 7px 12px;
+      border-radius: 999px;
+      background: #efe7d9;
+      color: var(--muted);
+      font-size: 13px;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+
+    h1, h2, h3, h4, p { margin: 0; }
+
+    h1 {
+      font-size: clamp(2.2rem, 4vw, 4rem);
+      line-height: 0.96;
+      letter-spacing: -0.04em;
+      max-width: 11ch;
+    }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: 1.7fr 1fr;
+      gap: 18px;
+      align-items: start;
+    }
+
+    .hero-copy {
+      display: grid;
+      gap: 14px;
+    }
+
+    .lead {
+      max-width: 68ch;
+      color: var(--muted);
+      font-size: 1.02rem;
+    }
+
+    .summary-strip {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .metric {
+      padding: 16px;
+      border-radius: 16px;
+      background: var(--paper-2);
+      border: 1px solid var(--line);
+      display: grid;
+      gap: 8px;
+      min-height: 124px;
+    }
+
+    .metric-label {
+      color: var(--muted);
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .metric-value {
+      font-size: 2rem;
+      line-height: 0.95;
+      letter-spacing: -0.04em;
+    }
+
+    .metric-note {
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    .layout-2 {
+      display: grid;
+      grid-template-columns: 1.25fr 1fr;
+      gap: 22px;
+    }
+
+    .stack {
+      display: grid;
+      gap: 22px;
+    }
+
+    .card,
+    .panel,
+    .table-card {
+      padding: 22px;
+    }
+
+    .section-head {
+      display: grid;
+      gap: 6px;
+      margin-bottom: 18px;
+    }
+
+    .section-head p {
+      color: var(--muted);
+    }
+
+    .tag-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: #faf6ef;
+      font-size: 0.9rem;
+      color: var(--muted);
+    }
+
+    .split-cards {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .mini-card {
+      padding: 16px;
+      border-radius: 16px;
+      background: var(--paper-2);
+      border: 1px solid var(--line);
+      display: grid;
+      gap: 10px;
+    }
+
+    .score {
+      display: grid;
+      gap: 10px;
+    }
+
+    .score-line {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 0.92rem;
+    }
+
+    .bar {
+      position: relative;
+      height: 10px;
+      border-radius: 999px;
+      background: #e4dbcc;
+      overflow: hidden;
+    }
+
+    .bar > span {
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--blue), #7594c7);
+    }
+
+    .bar.good > span { background: linear-gradient(90deg, var(--green), #6eb88a); }
+    .bar.warn > span { background: linear-gradient(90deg, var(--amber), #d8a44f); }
+    .bar.bad > span { background: linear-gradient(90deg, var(--red), #d07b74); }
+
+    .flow {
+      display: grid;
+      gap: 12px;
+    }
+
+    .flow-row {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      align-items: stretch;
+    }
+
+    .flow-box {
+      padding: 16px;
+      border-radius: 16px;
+      background: var(--paper-2);
+      border: 1px solid var(--line);
+      min-height: 148px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .flow-box h4 {
+      font-size: 1rem;
+      letter-spacing: -0.02em;
+    }
+
+    .flow-box p {
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    .flow-arrow {
+      text-align: center;
+      color: var(--muted);
+      font-size: 1.6rem;
+      line-height: 1;
+      padding: 4px 0 2px;
+    }
+
+    .list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .list-item {
+      padding: 14px 16px;
+      border-radius: 14px;
+      background: var(--paper-2);
+      border: 1px solid var(--line);
+      display: grid;
+      gap: 4px;
+    }
+
+    .list-item strong {
+      font-size: 0.98rem;
+    }
+
+    .list-item p {
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      width: fit-content;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+
+    .status.good { background: rgba(45, 124, 74, 0.12); color: var(--green); }
+    .status.warn { background: rgba(183, 120, 17, 0.12); color: var(--amber); }
+    .status.bad { background: rgba(161, 62, 54, 0.12); color: var(--red); }
+    .status.info { background: rgba(60, 94, 156, 0.12); color: var(--blue); }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.95rem;
+    }
+
+    th, td {
+      padding: 12px 10px;
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid var(--line);
+    }
+
+    th {
+      color: var(--muted);
+      font-size: 0.84rem;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      font-weight: 600;
+    }
+
+    td code {
+      font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+      background: #f2ebde;
+      border-radius: 8px;
+      padding: 2px 6px;
+      font-size: 0.9em;
+      word-break: break-all;
+    }
+
+    .risk-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .risk-card {
+      padding: 16px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: var(--paper-2);
+      display: grid;
+      gap: 8px;
+    }
+
+    .timeline {
+      display: grid;
+      gap: 12px;
+    }
+
+    .timeline-item {
+      display: grid;
+      grid-template-columns: 32px 1fr;
+      gap: 12px;
+      align-items: start;
+    }
+
+    .timeline-index {
+      width: 32px;
+      height: 32px;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      background: #171717;
+      color: #faf8f3;
+      font-size: 0.85rem;
+      font-weight: 700;
+    }
+
+    .footer-note {
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    .mono {
+      font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+      font-size: 0.92em;
+    }
+
+    @media (max-width: 1080px) {
+      .hero-grid,
+      .layout-2,
+      .summary-strip,
+      .flow-row,
+      .split-cards,
+      .risk-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <section class="hero">
+      <div class="eyebrow">Repo Analysis · 2026-03-26 · Static HTML</div>
+      <div class="hero-grid">
+        <div class="hero-copy">
+          <h1>Marathon 不是聊天应用，它已经很明确地长成了一个 AI 沙盒实验控制台。</h1>
+          <p class="lead">
+            从 README、容器内 agent loop、宿主机 orchestrator、Web UI、host nightly 模式、设计文档和真实运行产物看，
+            这个仓库的核心目标并不是“做一个通用 AI 前端”，而是做一套用于 <strong>本地/容器沙盒中运行自循环 agent、观察其行为、自我修改、记录轨迹并回放结果</strong> 的实验平台。
+          </p>
+          <div class="tag-row">
+            <span class="tag">推断目标：自治 agent 实验平台</span>
+            <span class="tag">当前形态：可运行原型</span>
+            <span class="tag">主要阻塞：环境硬依赖 + 运行鲁棒性</span>
+            <span class="tag">敏感信息：已在报告中脱敏</span>
+          </div>
+        </div>
+        <div class="card">
+          <div class="section-head">
+            <h3>一句话结论</h3>
+            <p>代码方向基本一致，但它目前更像“研究型控制平面”，还不是“稳定交付型产品”。</p>
+          </div>
+          <div class="list">
+            <div class="list-item">
+              <strong>如果你想要的是 AI Sandbox / Agent Lab：</strong>
+              <p>当前方向是对的，而且已经跑出了真实样本、UI、状态管理、nightly 模式和不少测试。</p>
+            </div>
+            <div class="list-item">
+              <strong>如果你想要的是可靠完成任务的自动编程产品：</strong>
+              <p>当前方向只部分对。系统把很多精力放在观测、容器管理和 UI，而不是任务规划、恢复、结构化输出和稳定完成率。</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="summary-strip">
+        <article class="metric">
+          <div class="metric-label">测试验证</div>
+          <div class="metric-value">91 / 91</div>
+          <div class="metric-note">本地 `pytest -q` 全通过，说明代码内部一致性不错。</div>
+        </article>
+        <article class="metric">
+          <div class="metric-label">真实运行痕迹</div>
+          <div class="metric-value">21 runs</div>
+          <div class="metric-note">`runs/` 下存在多次运行镜像，说明系统不是纸面结构。</div>
+        </article>
+        <article class="metric">
+          <div class="metric-label">最长完成轮次</div>
+          <div class="metric-value">1087</div>
+          <div class="metric-note">说明 loop 能长期跑，但不代表长期稳定。</div>
+        </article>
+        <article class="metric">
+          <div class="metric-label">Web UI 启动</div>
+          <div class="metric-value">OK</div>
+          <div class="metric-note">本地启动入口可正常监听 `127.0.0.1:8877`。</div>
+        </article>
+      </div>
+    </section>
+
+    <section class="layout-2">
+      <div class="stack">
+        <article class="card">
+          <div class="section-head">
+            <h2>我根据代码库推断，你真正想要的是什么</h2>
+            <p>这不是从想象推，而是从 README、模块职责和 UI 信息架构反推。</p>
+          </div>
+          <div class="list">
+            <div class="list-item">
+              <strong>1. 一个能把 AI 真正放进沙盒里运行的自治实验环境</strong>
+              <p>不是宿主机遥控容器，而是 agent 自己在容器里读 prompt、调模型、执行命令、修改自己。</p>
+            </div>
+            <div class="list-item">
+              <strong>2. 一个可观测、可回放、可对比的宿主机控制面</strong>
+              <p>你想看的不只是“最后结果”，而是每轮动作、stdout/stderr、状态前后差异、自修改痕迹。</p>
+            </div>
+            <div class="list-item">
+              <strong>3. 两种实验路径</strong>
+              <p>一条在 LXC 沙盒里做强隔离探索，一条直接在真实 Git 仓库里做 nightly 自动迭代。</p>
+            </div>
+            <div class="list-item">
+              <strong>4. UI 不只是运维面板，而是“浏览式实验台”</strong>
+              <p>最近的 dashboard 设计文档明确在把首页从控制台感改成浏览器感，但核心仍然围绕 agent 运行状态。</p>
+            </div>
+            <div class="list-item">
+              <strong>5. 允许 agent 自我修改，是产品定义的一部分</strong>
+              <p>系统主动跟踪 `prompt_source`、`tool_source`、`loop_source` 的变化，说明“观察自修改”不是偶然功能，而是核心研究目标。</p>
+            </div>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="section-head">
+            <h2>方向判断</h2>
+            <p>下面的分数是基于当前代码形态做的推断，不是产品 KPI。</p>
+          </div>
+          <div class="split-cards">
+            <div class="mini-card">
+              <div class="status good">高一致</div>
+              <h3>如果目标是 “自治 agent 沙盒实验平台”</h3>
+              <div class="score">
+                <div class="score-line"><span>对齐度</span><strong>82 / 100</strong></div>
+                <div class="bar good"><span style="width:82%"></span></div>
+              </div>
+              <p>核心 loop、宿主镜像、控制 UI、nightly 分支模式、self-modification 追踪都在服务这个方向。</p>
+            </div>
+            <div class="mini-card">
+              <div class="status warn">中度一致</div>
+              <h3>如果目标是 “稳定交付任务的自动软件工程产品”</h3>
+              <div class="score">
+                <div class="score-line"><span>对齐度</span><strong>46 / 100</strong></div>
+                <div class="bar warn"><span style="width:46%"></span></div>
+              </div>
+              <p>现在更重观察与实验，较少投入在恢复、记忆、任务分解、产物验收和可靠完成率上。</p>
+            </div>
+          </div>
+        </article>
+      </div>
+
+      <div class="stack">
+        <article class="card">
+          <div class="section-head">
+            <h2>证据快照</h2>
+            <p>这几条是最能支撑判断的硬证据。</p>
+          </div>
+          <div class="list">
+            <div class="list-item">
+              <strong>README 定位非常直白</strong>
+              <p><code>README.md</code> 直接写明它是“零干预、自循环、本地沙盒 AI 智能体实验”的极简原型。</p>
+            </div>
+            <div class="list-item">
+              <strong>真实 freeplay 运行到 740 轮后因 JSON 解析失败中断</strong>
+              <p>这说明系统已经具备长时间运行能力，但结构化输出鲁棒性仍是明显短板。</p>
+            </div>
+            <div class="list-item">
+              <strong>Web UI 不只是看板</strong>
+              <p><code>host/web_ui.py</code> 已有创建 base、克隆容器、启停容器、启动 agent、停止 run、读取详情等完整 API。</p>
+            </div>
+            <div class="list-item">
+              <strong>host nightly 是第二条正式运行主线</strong>
+              <p><code>host/host_nightly.py</code> + <code>host/host_nightly_runner.py</code> 说明它也在认真追求对真实 Git 仓库的自动化夜间运行。</p>
+            </div>
+            <div class="list-item">
+              <strong>测试数量说明这不是一次性拼出来的 demo</strong>
+              <p>共 91 个测试，集中覆盖 loop、UI、network、scripts、nightly 和 design-lab。</p>
+            </div>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="section-head">
+            <h2>当前健康度</h2>
+            <p>把“能写代码”和“能稳定运行”拆开看。</p>
+          </div>
+          <div class="list">
+            <div class="list-item">
+              <span class="status good">代码层健康</span>
+              <p>标准库实现、局部边界清晰、测试全绿、Web UI 能起。</p>
+            </div>
+            <div class="list-item">
+              <span class="status warn">环境层脆弱</span>
+              <p>强依赖 LXC、网络桥、免密 sudo、tmux、容器内 apt、宿主 Git 与 origin/HEAD 等条件。</p>
+            </div>
+            <div class="list-item">
+              <span class="status warn">运行层可跑但不够稳</span>
+              <p>模型若不严格返回 JSON，就会终止 run；缺少自动修复或回退协议。</p>
+            </div>
+            <div class="list-item">
+              <span class="status bad">产品层仍偏实验</span>
+              <p>还没有真正把“完成任务”做成第一优先级，更多是在围绕观察与容器控制打磨。</p>
+            </div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="section-head">
+        <h2>当前代码是怎么实现的</h2>
+        <p>把主链路拆开看，整个系统其实非常清晰。</p>
+      </div>
+      <div class="flow">
+        <div class="flow-row">
+          <div class="flow-box">
+            <h4>1. 容器内 Agent Loop</h4>
+            <p><code>container/agent_loop.py</code> 每轮收集沙盒状态、最近动作和工具结果，拼成消息发给模型，再提取 JSON action。</p>
+            <div class="status info">核心：单轮闭环</div>
+          </div>
+          <div class="flow-box">
+            <h4>2. 唯一工具层</h4>
+            <p><code>container/agent_tools.py</code> 只做一件事：在 sandbox 目录执行一条命令，把结果打包成 JSON。</p>
+            <div class="status info">核心：单工具、强约束</div>
+          </div>
+          <div class="flow-box">
+            <h4>3. 宿主 Supervisor</h4>
+            <p><code>host/orchestrator.py</code> 负责同步 prompt、启动 agent 进程、轮询状态、镜像日志和最新 round 到宿主 <code>runs/</code>。</p>
+            <div class="status info">核心：镜像与控制</div>
+          </div>
+          <div class="flow-box">
+            <h4>4. Web UI / API</h4>
+            <p><code>host/web_ui.py</code> 用标准库 HTTP server 暴露静态页面与 API，管理容器、run、模型配置和 prompt。</p>
+            <div class="status info">核心：宿主控制面</div>
+          </div>
+        </div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-row">
+          <div class="flow-box">
+            <h4>5. 状态与运行镜像</h4>
+            <p><code>state/containers/</code> 保存容器元数据，<code>runs/</code> 保存 host 镜像，<code>host-runs/</code> 保存 nightly 运行日志。</p>
+            <div class="status info">核心：文件驱动状态</div>
+          </div>
+          <div class="flow-box">
+            <h4>6. UI 页面分层</h4>
+            <p>首页看重点与最近活跃；<code>/new</code> 创建任务；<code>/container</code> 看单容器实时轨迹；<code>/sandboxes</code> 管理容器。</p>
+            <div class="status info">核心：浏览式控制台</div>
+          </div>
+          <div class="flow-box">
+            <h4>7. Host Nightly</h4>
+            <p><code>host/host_nightly_runner.py</code> 直接对真实仓库跑 round，必要时 checkpoint 脏工作区，并创建 nightly 分支。</p>
+            <div class="status info">核心：真实仓库自动迭代</div>
+          </div>
+          <div class="flow-box">
+            <h4>8. Design Lab</h4>
+            <p>设计实验室是 UI 变体观察台，用于比较不同界面布局，并不阻塞核心运行链路。</p>
+            <div class="status warn">旁支：界面实验</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="table-card">
+      <div class="section-head">
+        <h2>模块成熟度表</h2>
+        <p>哪些已经成形，哪些还是明显的原型形态。</p>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>模块</th>
+            <th>职责</th>
+            <th>现状</th>
+            <th>主要问题</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>container/agent_loop.py</code></td>
+            <td>轮次控制、模型调用、日志写入、状态采集</td>
+            <td>已成形</td>
+            <td>过度依赖模型严格 JSON；失败后缺少更强恢复机制</td>
+          </tr>
+          <tr>
+            <td><code>container/agent_tools.py</code></td>
+            <td>唯一命令执行工具</td>
+            <td>已成形</td>
+            <td>能力极简，适合实验，不一定适合高完成率任务</td>
+          </tr>
+          <tr>
+            <td><code>host/orchestrator.py</code></td>
+            <td>启动容器内 agent、同步 prompt、镜像日志</td>
+            <td>已成形</td>
+            <td>依赖宿主网络/LXC/sudo，环境失败会直接外露</td>
+          </tr>
+          <tr>
+            <td><code>host/web_ui.py</code></td>
+            <td>宿主管理 API + 静态页面服务</td>
+            <td>已成形</td>
+            <td>无认证、配置与密钥管理偏粗糙、仍偏单机工具</td>
+          </tr>
+          <tr>
+            <td><code>host/host_nightly*.py</code></td>
+            <td>对真实 Git 仓库的 nightly 自动运行</td>
+            <td>已成形</td>
+            <td>假定 repo/origin/HEAD 均健康，真实异常场景还不够多</td>
+          </tr>
+          <tr>
+            <td><code>host/static/*</code></td>
+            <td>总览/创建/详情/容器列表 UI</td>
+            <td>成形</td>
+            <td>仍偏实验运维台，没有真正的成果验收视角</td>
+          </tr>
+          <tr>
+            <td><code>host/static/design-lab/*</code></td>
+            <td>设计方案实验台</td>
+            <td>实验态</td>
+            <td>不影响主线，但会分散精力</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="layout-2">
+      <article class="card">
+        <div class="section-head">
+          <h2>它还缺什么，才算“真正能跑起来”</h2>
+          <p>这里说的不是“代码能 import”，而是“作为系统能稳定工作”。</p>
+        </div>
+        <div class="timeline">
+          <div class="timeline-item">
+            <div class="timeline-index">1</div>
+            <div class="list-item">
+              <strong>一套可重复的宿主环境 bootstrap</strong>
+              <p>现在真正的复杂度在 LXC、bridge、veth、免密 sudo、tmux、容器内 apt。缺少“一键把宿主环境准备好”的正式流程。</p>
+            </div>
+          </div>
+          <div class="timeline-item">
+            <div class="timeline-index">2</div>
+            <div class="list-item">
+              <strong>更强的模型输出协议与修复策略</strong>
+              <p>真实样本已证明：只要 JSON 输出破一点，run 就会失败。需要响应修复、重试、结构化输出约束或备用解析策略。</p>
+            </div>
+          </div>
+          <div class="timeline-item">
+            <div class="timeline-index">3</div>
+            <div class="list-item">
+              <strong>更可靠的失败恢复与续跑</strong>
+              <p>目前更像“失败即结束”。缺少从上轮状态恢复、自动插入纠错提示、按错误类型重试等能力。</p>
+            </div>
+          </div>
+          <div class="timeline-item">
+            <div class="timeline-index">4</div>
+            <div class="list-item">
+              <strong>安全收口</strong>
+              <p>模型配置里明文保存 API key，本地 UI 无认证，容器和宿主操作权限较高，这些都不适合长期使用。</p>
+            </div>
+          </div>
+          <div class="timeline-item">
+            <div class="timeline-index">5</div>
+            <div class="list-item">
+              <strong>真正围绕“任务完成”设计的反馈闭环</strong>
+              <p>现在系统主要让你看到 agent 正在做什么，但还较少判断“它有没有接近成功定义”。</p>
+            </div>
+          </div>
+          <div class="timeline-item">
+            <div class="timeline-index">6</div>
+            <div class="list-item">
+              <strong>更真实的端到端环境测试</strong>
+              <p>91 个测试很好，但多数仍是单元/轻集成。真正依赖的 LXC 与宿主条件，需要更系统的 smoke/e2e 证明。</p>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="section-head">
+          <h2>最关键的风险矩阵</h2>
+          <p>不是所有缺口都同级，下面是我认为最值得优先补的四项。</p>
+        </div>
+        <div class="risk-grid">
+          <div class="risk-card">
+            <span class="status bad">P0</span>
+            <strong>密钥明文落盘</strong>
+            <p><code>state/model_profiles.json</code> 当前保存 API key。即使这是本机工具，也应该改成 env-only、引用式配置或最少脱敏存储。</p>
+          </div>
+          <div class="risk-card">
+            <span class="status bad">P0</span>
+            <strong>模型 JSON 响应脆弱</strong>
+            <p>长跑真实失败已经落在这里。只要不修，这个平台的稳定性天花板就不高。</p>
+          </div>
+          <div class="risk-card">
+            <span class="status warn">P1</span>
+            <strong>环境依赖太多且隐式</strong>
+            <p>机器稍微不一样，bridge/veth/modules/sudo 就可能出问题。当前更像作者机器上的可运行系统。</p>
+          </div>
+          <div class="risk-card">
+            <span class="status warn">P1</span>
+            <strong>过度偏向观察，尚未偏向产出</strong>
+            <p>你现在已经很会看 agent 做了什么，但还不够会保证 agent 做成了什么。</p>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <section class="table-card">
+      <div class="section-head">
+        <h2>我建议的下一步顺序</h2>
+        <p>如果你的目标是把它从“研究原型”推进成“可靠可用系统”，优先级应该这样排。</p>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>优先级</th>
+            <th>建议动作</th>
+            <th>为什么</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>P0</td>
+            <td>把模型输出层改成更稳的结构化协议</td>
+            <td>这是已被真实 run 证明的第一稳定性瓶颈。</td>
+          </tr>
+          <tr>
+            <td>P0</td>
+            <td>移除明文 API key 持久化，改为 env 或安全引用</td>
+            <td>这是明显的安全债，不该继续累积。</td>
+          </tr>
+          <tr>
+            <td>P1</td>
+            <td>做一份宿主环境 preflight + bootstrap</td>
+            <td>把 LXC、bridge、sudo、tmux、git 前提显式化，降低“只在作者机器可跑”的风险。</td>
+          </tr>
+          <tr>
+            <td>P1</td>
+            <td>做端到端 smoke：建容器 → 启动 run → 完成 3 轮 → UI 可见</td>
+            <td>目前测试多，但缺少完整主链路的自动验证。</td>
+          </tr>
+          <tr>
+            <td>P1</td>
+            <td>补失败恢复与自动纠错轮</td>
+            <td>否则一旦响应异常就直接停，长跑稳定性很难上去。</td>
+          </tr>
+          <tr>
+            <td>P2</td>
+            <td>给 UI 增加“成功定义 / 任务完成度”视角</td>
+            <td>把控制台从“看轨迹”推进到“看结果”。</td>
+          </tr>
+          <tr>
+            <td>P2</td>
+            <td>明确 design-lab 与主产品节奏的关系</td>
+            <td>否则 UI 实验支线会持续消耗主线注意力。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="layout-2">
+      <article class="card">
+        <div class="section-head">
+          <h2>仓库成熟度指标</h2>
+          <p>这些是我在这次分析里实际验证到的数据。</p>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>指标</th>
+              <th>数值</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>测试用例数</td><td>91</td></tr>
+            <tr><td>测试结果</td><td>全部通过</td></tr>
+            <tr><td>核心 Web UI 文件行数</td><td><code>host/web_ui.py</code> 1457 行</td></tr>
+            <tr><td>核心 Agent Loop 文件行数</td><td><code>container/agent_loop.py</code> 618 行</td></tr>
+            <tr><td>容器状态元数据文件</td><td>12</td></tr>
+            <tr><td>宿主 run 镜像目录</td><td>21</td></tr>
+            <tr><td>host nightly 运行目录</td><td>2</td></tr>
+            <tr><td>已完成 run 数</td><td>4</td></tr>
+            <tr><td>失败 run 数</td><td>4</td></tr>
+            <tr><td>历史最高完成轮次</td><td>1087</td></tr>
+          </tbody>
+        </table>
+      </article>
+
+      <article class="card">
+        <div class="section-head">
+          <h2>结论摘要</h2>
+          <p>这也是我会直接给你的口头回答。</p>
+        </div>
+        <div class="list">
+          <div class="list-item">
+            <strong>你想要的东西：</strong>
+            <p>一个真正把 agent 放进沙盒里跑起来、让你观察、控制、复盘、自修改和对比结果的 AI 实验平台。</p>
+          </div>
+          <div class="list-item">
+            <strong>它现在已经做到：</strong>
+            <p>主链路代码已成形，Web UI 可用，nightly 模式存在，测试全绿，也有真实长跑证据。</p>
+          </div>
+          <div class="list-item">
+            <strong>它现在还没做到：</strong>
+            <p>把这套系统提升成稳定、安全、环境可重复、失败可恢复、以“完成任务”为中心的产品。</p>
+          </div>
+          <div class="list-item">
+            <strong>方向是否对：</strong>
+            <p>如果你要的是“agent sandbox lab”，方向对；如果你要的是“高完成率自动开发产品”，方向只对了一半。</p>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <section class="card">
+      <div class="section-head">
+        <h2>这次分析使用的主要证据路径</h2>
+        <p>下面这些文件是本报告最主要的依据。</p>
+      </div>
+      <div class="list">
+        <div class="list-item"><strong class="mono">README.md</strong><p>产品定位、运行模式、设计原则。</p></div>
+        <div class="list-item"><strong class="mono">container/agent_loop.py</strong><p>容器内主循环、模型调用、round 写盘机制。</p></div>
+        <div class="list-item"><strong class="mono">container/agent_tools.py</strong><p>唯一工具边界。</p></div>
+        <div class="list-item"><strong class="mono">host/orchestrator.py</strong><p>宿主 supervisor、日志镜像、run 生命周期。</p></div>
+        <div class="list-item"><strong class="mono">host/web_ui.py</strong><p>UI/API、run/container 聚合、self-modification 追踪。</p></div>
+        <div class="list-item"><strong class="mono">host/host_nightly.py</strong> + <strong class="mono">host/host_nightly_runner.py</strong><p>nightly 自动化路径。</p></div>
+        <div class="list-item"><strong class="mono">host/static/*.html / *.js</strong><p>首页、创建页、详情页、容器页、设计实验室的实际信息架构。</p></div>
+        <div class="list-item"><strong class="mono">runs/marathon-freeplay-20260324-101216-c-run/status.json</strong><p>真实长跑失败样本。</p></div>
+        <div class="list-item"><strong class="mono">tests/*.py</strong><p>91 个测试用例的覆盖面与成熟度信号。</p></div>
+      </div>
+      <p class="footer-note">
+        说明：本报告刻意没有展示 <code>state/model_profiles.json</code> 中的实际密钥内容，只记录“存在明文密钥风险”这一事实。
+      </p>
+    </section>
+  </div>
+</body>
+</html>

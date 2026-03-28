@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>流程台</title>
+  <link rel="stylesheet" href="/design-lab/shared.css">
+  <style>
+    body {
+      margin: 0;
+      min-height: 100%;
+      background: #eef0f2;
+      color: #1a1f25;
+      font-family: "IBM Plex Sans", "Avenir Next", "Helvetica Neue", sans-serif;
+      line-height: 1.5;
+    }
+
+    .flow-shell {
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 24px 20px 48px;
+      display: grid;
+      gap: 16px;
+    }
+
+    .flow-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .flow-header-copy {
+      display: grid;
+      gap: 8px;
+      max-width: 40rem;
+    }
+
+    .flow-back-link {
+      font-size: 14px;
+      text-decoration: none;
+      color: #3b5c63;
+    }
+
+    .flow-header h1 {
+      margin: 0;
+      font-size: clamp(2rem, 4vw, 3rem);
+      line-height: 0.96;
+      letter-spacing: -0.03em;
+    }
+
+    .flow-header p {
+      margin: 0;
+    }
+
+    .flow-variant-nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .flow-variant-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 38px;
+      padding: 0 12px;
+      border: 1px solid #c8d0d7;
+      border-radius: 10px;
+      background: #f9fbfc;
+      text-decoration: none;
+      transition: background-color 120ms ease, border-color 120ms ease;
+    }
+
+    .flow-variant-link:hover,
+    .flow-variant-link:focus-visible {
+      background: #edf2f5;
+      border-color: #aeb8c0;
+    }
+
+    .flow-variant-link-current {
+      background: #1a1f25;
+      border-color: #1a1f25;
+      color: #f5f7fa;
+    }
+
+    .flow-layout {
+      display: grid;
+      gap: 16px;
+    }
+
+    .flow-main-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.25fr) minmax(280px, 360px);
+      gap: 16px;
+      align-items: start;
+    }
+
+    @media (max-width: 980px) {
+      .flow-main-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="flow-shell">
+    <header class="flow-header">
+      <div class="flow-header-copy">
+        <a class="flow-back-link" href="/design-lab/index.html">返回设计实验室</a>
+        <h1>流程台</h1>
+        <p class="muted">把上下文、时间线和细节分开看。</p>
+      </div>
+      <nav class="flow-variant-nav" aria-label="设计方案">
+        <a class="flow-variant-link" data-variant-page="design-consultation.html" href="design-consultation.html">观察台</a>
+        <a class="flow-variant-link" data-variant-page="ui-ux-pro-max.html" href="ui-ux-pro-max.html">控制台</a>
+        <a class="flow-variant-link flow-variant-link-current" data-variant-page="penpot-uiux-design.html" href="penpot-uiux-design.html">流程台</a>
+      </nav>
+    </header>
+
+    <div class="flow-layout">
+      <section id="flow-context" class="card"></section>
+
+      <div class="flow-main-grid">
+        <section id="flow-timeline" class="card"></section>
+        <section id="flow-detail" class="card"></section>
+      </div>
+    </div>
+  </main>
+
+  <script src="/design-lab/shared.js"></script>
+  <script>
+    (function () {
+      "use strict";
+
+      const shared = window.DesignLabShared;
+
+      function createNode(tagName, className, text) {
+        const element = document.createElement(tagName);
+        if (className) {
+          element.className = className;
+        }
+        if (text !== undefined) {
+          element.textContent = text;
+        }
+        return element;
+      }
+
+      function appendSectionHeader(target, title, copy) {
+        const header = createNode("div", "section-header");
+        header.append(createNode("h2", "", title));
+        if (copy) {
+          header.append(createNode("p", "muted", copy));
+        }
+        target.append(header);
+      }
+
+      function appendStatCard(target, label, value, note) {
+        const card = createNode("div", "stat-card");
+        card.append(createNode("div", "stat-label", label));
+        card.append(createNode("strong", "stat-value", value || "—"));
+        if (note) {
+          card.append(createNode("p", "stat-note", note));
+        }
+        target.append(card);
+      }
+
+      function appendDetailPanel(target, label, value) {
+        const panel = createNode("section", "detail-panel");
+        panel.append(createNode("div", "detail-label", label));
+        panel.append(createNode("pre", "detail-text", value));
+        target.append(panel);
+      }
+
+      function getRuntime(runDetail, containerDetail) {
+        if (runDetail && runDetail.container_runtime) {
+          return runDetail.container_runtime;
+        }
+        if (containerDetail && containerDetail.container_runtime) {
+          return containerDetail.container_runtime;
+        }
+        return {};
+      }
+
+      function getWorkspaceStatus(runDetail) {
+        const afterState = runDetail && runDetail.latest_state_after ? runDetail.latest_state_after : {};
+        const beforeState = runDetail && runDetail.latest_state_before ? runDetail.latest_state_before : {};
+        const gitStatus = afterState.sandbox_git_status || beforeState.sandbox_git_status || "";
+        return gitStatus.trim();
+      }
+
+      function getLatestCommand(runDetail) {
+        const latestToolResult = runDetail && runDetail.latest_tool_result ? runDetail.latest_tool_result : {};
+        if (Array.isArray(latestToolResult.argv) && latestToolResult.argv.length) {
+          return latestToolResult.argv.join(" ");
+        }
+        return "";
+      }
+
+      function renderContext(target, runDetail, containerDetail, context) {
+        if (!runDetail && !containerDetail && !context.runId && !context.container) {
+          shared.renderNoContextState(target, "先选中一个运行或容器。");
+          return;
+        }
+
+        target.replaceChildren();
+        appendSectionHeader(target, "上下文");
+
+        const summary = runDetail && runDetail.summary ? runDetail.summary : {};
+        const latestRound = runDetail && runDetail.latest_round ? runDetail.latest_round : {};
+        const runtime = getRuntime(runDetail, containerDetail);
+        const selfModification = runDetail && runDetail.observation ? runDetail.observation.self_modification : null;
+        const grid = createNode("div", "stats-grid");
+
+        appendStatCard(
+          grid,
+          "焦点",
+          summary.run_id || context.runId || context.container || shared.EMPTY_MESSAGES.noContext,
+          summary.container || context.container || "容器未定"
+        );
+        appendStatCard(
+          grid,
+          "状态",
+          shared.formatState(runtime.state || summary.state || "unknown"),
+          latestRound.summary || summary.last_summary || "还没有明显变化"
+        );
+        appendStatCard(
+          grid,
+          "轮次",
+          String(summary.completed_rounds ?? 0),
+          summary.updated_at || "还没有更新时间"
+        );
+        appendStatCard(
+          grid,
+          "自我修改",
+          selfModification && selfModification.observed ? "已观察到" : "无",
+          selfModification && selfModification.observed
+            ? shared.formatCategory(selfModification.latest_category)
+            : "当前稳定"
+        );
+        target.append(grid);
+      }
+
+      function renderTimeline(target, runDetail) {
+        if (!runDetail) {
+          shared.renderEmptyState(target, "还没有时间线", "先选中一次运行。");
+          return;
+        }
+
+        const rounds = Array.isArray(runDetail.recent_rounds) ? runDetail.recent_rounds.slice(0, 8) : [];
+        if (!rounds.length) {
+          shared.renderEmptyState(target, "还没有时间线", "这次运行还没有轮次记录。");
+          return;
+        }
+
+        target.replaceChildren();
+        appendSectionHeader(target, "时间线");
+
+        const list = createNode("ol", "feed-list");
+        rounds.forEach(function (round) {
+          const item = createNode("li", "feed-item");
+          const meta = createNode("div", "meta-row");
+          meta.append(createNode("span", "pill", "第 " + (round.round || "—") + " 轮"));
+          meta.append(createNode("span", round.failed ? "pill pill-bad" : "pill pill-good", shared.formatRoundOutcome(round)));
+          if (round.returncode !== undefined && round.returncode !== null) {
+            meta.append(createNode("span", round.returncode === 0 ? "pill pill-good" : "pill pill-warn", "返回码 " + round.returncode));
+          }
+          if (round.ts) {
+            meta.append(createNode("span", "pill", round.ts));
+          }
+          item.append(meta);
+          item.append(createNode("p", "", round.summary || "这一轮还没有摘要。"));
+          list.append(item);
+        });
+        target.append(list);
+      }
+
+      function renderDetail(target, runDetail) {
+        if (!runDetail) {
+          shared.renderEmptyState(target, "还没有细节", "先选中一次运行。");
+          return;
+        }
+
+        target.replaceChildren();
+        appendSectionHeader(target, "细节");
+
+        const detailGrid = createNode("div", "detail-grid");
+        const latestToolResult = runDetail.latest_tool_result || {};
+        const latestCommand = getLatestCommand(runDetail);
+        const workspaceStatus = getWorkspaceStatus(runDetail);
+        const selfModification = runDetail.observation ? runDetail.observation.self_modification : null;
+
+        if (selfModification && selfModification.observed) {
+          appendDetailPanel(
+            detailGrid,
+            "自我修改",
+            [
+              "状态：已观察到",
+              "类别：" + shared.formatCategory(selfModification.latest_category),
+              "次数：" + String(selfModification.count || 0),
+              "最近轮次：" + String(selfModification.latest_round || "当前"),
+            ].join("\n")
+          );
+        } else {
+          appendDetailPanel(detailGrid, "自我修改", "状态：未观察到\n当前还没有受追踪的变化。");
+        }
+
+        if (latestCommand) {
+          appendDetailPanel(detailGrid, "最近命令", latestCommand);
+        }
+        if (runDetail.latest_response_text) {
+          appendDetailPanel(detailGrid, "模型回复", runDetail.latest_response_text);
+        }
+        if (latestToolResult.stdout) {
+          appendDetailPanel(detailGrid, "标准输出", latestToolResult.stdout);
+        }
+        if (latestToolResult.stderr) {
+          appendDetailPanel(detailGrid, "错误输出", latestToolResult.stderr);
+        }
+        if (workspaceStatus) {
+          appendDetailPanel(detailGrid, "工作区", workspaceStatus.split("\n").slice(0, 8).join("\n"));
+        }
+
+        target.append(detailGrid);
+      }
+
+      async function loadFlowDesk() {
+        const contextTarget = document.getElementById("flow-context");
+        const timelineTarget = document.getElementById("flow-timeline");
+        const detailTarget = document.getElementById("flow-detail");
+        const context = shared.getSelectedContext();
+
+        if (!context.runId && !context.container) {
+          shared.renderNoContextState(contextTarget, "先回首页选一个运行或容器。");
+          shared.renderEmptyState(timelineTarget, "还没有时间线", "先选中一次运行。");
+          shared.renderEmptyState(detailTarget, "还没有细节", "先选中一次运行。");
+          return;
+        }
+
+        let runDetail = null;
+        let containerDetail = null;
+
+        try {
+          if (context.runId) {
+            runDetail = await shared.fetchRunDetail(context.runId);
+          } else if (context.container) {
+            containerDetail = await shared.fetchContainerDetail(context.container);
+          }
+        } catch (error) {
+          shared.renderModelFailureState(contextTarget, error);
+          shared.renderActionFailureState(timelineTarget, error);
+          shared.renderActionFailureState(detailTarget, error);
+          return;
+        }
+
+        renderContext(contextTarget, runDetail, containerDetail, context);
+        renderTimeline(timelineTarget, runDetail);
+        renderDetail(detailTarget, runDetail);
+      }
+
+      document.addEventListener("DOMContentLoaded", loadFlowDesk);
+    })();
+  </script>
+</body>
+</html>

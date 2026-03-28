@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Marathon 设计实验室</title>
+  <link rel="stylesheet" href="/design-lab/shared.css">
+  <style>
+    body {
+      margin: 0;
+      min-height: 100%;
+      background: #ede7dc;
+      color: #171717;
+      font-family: "IBM Plex Sans", "Avenir Next", "Helvetica Neue", sans-serif;
+      line-height: 1.5;
+    }
+
+    .index-shell {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 32px 20px 48px;
+      display: grid;
+      gap: 20px;
+    }
+
+    .index-header {
+      display: grid;
+      gap: 8px;
+    }
+
+    .index-header h1,
+    .index-panel h2,
+    .index-variant h2 {
+      margin: 0;
+      letter-spacing: -0.03em;
+    }
+
+    .index-header h1 {
+      font-size: clamp(2rem, 4vw, 3.1rem);
+      line-height: 0.95;
+    }
+
+    .index-header p,
+    .index-panel p,
+    .index-variant p {
+      margin: 0;
+    }
+
+    .index-panel {
+      background: #fffdf8;
+    }
+
+    .index-panel-copy {
+      display: grid;
+      gap: 4px;
+    }
+
+    .index-context-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
+      gap: 12px;
+      align-items: end;
+    }
+
+    .index-field {
+      display: grid;
+      gap: 6px;
+    }
+
+    .index-field span {
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .index-input {
+      width: 100%;
+      min-height: 42px;
+      padding: 10px 12px;
+      border: 1px solid #c9c4b8;
+      border-radius: 10px;
+      background: #ffffff;
+      color: #171717;
+    }
+
+    .index-button,
+    .index-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 42px;
+      padding: 0 14px;
+      border-radius: 10px;
+      text-decoration: none;
+      border: 1px solid #171717;
+      transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+    }
+
+    .index-button {
+      background: #171717;
+      color: #faf8f3;
+      cursor: pointer;
+    }
+
+    .index-button:hover,
+    .index-button:focus-visible {
+      background: #2b2b2b;
+    }
+
+    .index-link {
+      background: #f3efe6;
+      border-color: #cdc7ba;
+      color: #171717;
+    }
+
+    .index-link:hover,
+    .index-link:focus-visible {
+      background: #ebe4d8;
+      border-color: #b7b09f;
+    }
+
+    .index-summary {
+      min-height: 20px;
+      font-size: 14px;
+    }
+
+    .index-variant-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 16px;
+    }
+
+    .index-variant {
+      display: grid;
+      gap: 14px;
+      align-content: start;
+    }
+
+    .index-variant-copy {
+      display: grid;
+      gap: 6px;
+    }
+
+    @media (max-width: 820px) {
+      .index-context-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="index-shell">
+    <header class="index-header">
+      <h1>Marathon 设计实验室</h1>
+      <p class="muted">选一个上下文，再看三种界面摆法。</p>
+    </header>
+
+    <section class="card card-stack index-panel">
+      <div class="index-panel-copy">
+        <h2>选上下文</h2>
+        <p class="muted">填运行 ID、容器名，或两者都填。</p>
+      </div>
+
+      <form class="index-context-grid" data-context-form>
+        <label class="index-field">
+          <span>运行 ID</span>
+          <input class="index-input" type="text" placeholder="run-20260322-001" data-context-run-id>
+        </label>
+        <label class="index-field">
+          <span>容器名</span>
+          <input class="index-input" type="text" placeholder="marathon-sandbox-01" data-context-container>
+        </label>
+        <div>
+          <button class="index-button" type="submit">应用</button>
+        </div>
+      </form>
+
+      <div class="index-summary muted" data-overview-summary>正在读取概览。</div>
+    </section>
+
+    <section class="index-variant-grid">
+      <article class="card index-variant">
+        <div class="index-variant-copy">
+          <h2>观察台</h2>
+          <p class="muted">当前、时间线、输出，顺着轮次往下看。</p>
+        </div>
+        <a class="index-link" data-variant-page="design-consultation.html" href="design-consultation.html">打开观察台</a>
+      </article>
+
+      <article class="card index-variant">
+        <div class="index-variant-copy">
+          <h2>控制台</h2>
+          <p class="muted">状态、动态、输出，先扫一眼再下钻。</p>
+        </div>
+        <a class="index-link" data-variant-page="ui-ux-pro-max.html" href="ui-ux-pro-max.html">打开控制台</a>
+      </article>
+
+      <article class="card index-variant">
+        <div class="index-variant-copy">
+          <h2>流程台</h2>
+          <p class="muted">上下文、时间线、细节，分工更清楚。</p>
+        </div>
+        <a class="index-link" data-variant-page="penpot-uiux-design.html" href="penpot-uiux-design.html">打开流程台</a>
+      </article>
+    </section>
+  </main>
+
+  <script src="/design-lab/shared.js"></script>
+</body>
+</html>

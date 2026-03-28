@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Marathon 容器列表</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23111111'/%3E%3Ctext x='50%25' y='54%25' dominant-baseline='middle' text-anchor='middle' font-size='32' fill='%23f6f3ec' font-family='Helvetica'%3EM%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+  <script src="/sandboxes.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <h1>Marathon 容器列表</h1>
+      <p>这里只看有哪些容器。想看任务进展和日志，就进总览或容器详情。</p>
+    </div>
+    <div class="topbar-links">
+      <a class="nav-link" href="/">总览</a>
+      <a class="nav-link" href="/new">新建任务</a>
+      <a class="nav-link current" href="/sandboxes">容器列表</a>
+      <a class="nav-link" href="/agents">AI 账号</a>
+      <a class="nav-link" href="/design-lab/index.html">设计实验室</a>
+      <span class="nav-link" id="serverTime">-</span>
+    </div>
+  </header>
+
+  <main class="page">
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <h2>容器列表</h2>
+          <p class="section-copy" id="pageNote">正在读取容器列表。</p>
+        </div>
+        <button class="button-primary" id="refreshBtn">刷新</button>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>容器名</th>
+              <th>容器状态</th>
+              <th>任务状态</th>
+              <th>最近情况</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="sandboxesTableBody">
+            <tr>
+              <td colspan="5">正在读取容器列表。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
