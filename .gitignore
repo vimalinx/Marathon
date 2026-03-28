@@ -7,6 +7,7 @@ state/
 .pytest_cache/
 .playwright-cli/
 .benchmarks/
+.worktrees/
 host-runs/
 output/
 findings.md
