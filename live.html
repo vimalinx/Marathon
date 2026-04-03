@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Live Snapshot</title>
+  <link rel="icon" href="./favicon.svg">
+  <link rel="stylesheet" href="./site.css">
+  <script src="./site.js" defer></script>
+</head>
+<body data-page="live">
+  <header class="site-shell detail-hero">
+    <nav class="breadcrumb">
+      <a href="./index.html">Home</a>
+      <span>/</span>
+      <span>Live Snapshot</span>
+    </nav>
+    <p class="eyebrow">Live Snapshot</p>
+    <h1>这是导出时刻捕捉到的 live runs。</h1>
+    <p class="hero-copy" id="liveSummary">GitHub Pages 不提供实时长连接；这里展示的是静态导出时刻的运行中视图。</p>
+  </header>
+
+  <main class="site-shell page-grid">
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">Running</p>
+          <h2>Live Runs At Export Time</h2>
+        </div>
+      </div>
+      <div class="stack-list" id="liveGrid"></div>
+    </section>
+  </main>
+</body>
+</html>

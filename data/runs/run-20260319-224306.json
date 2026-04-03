@@ -1,0 +1,25 @@
+{
+  "generated_at": "2026-04-03T09:59:18+0800",
+  "summary": {
+    "public_run_id": "run-20260319-224306",
+    "run_id": "run-20260319-224306",
+    "title": "marathon-local-autoload-20260319-224302 · run-20260319-224306",
+    "container": "marathon-local-autoload-20260319-224302",
+    "agent_handle": null,
+    "agent_display_name": null,
+    "state": "completed",
+    "is_live": false,
+    "mode": "task",
+    "updated_at": "2026-03-19T14:43:20+0000",
+    "round_count": 1,
+    "preview": "查看当前工作目录和文件以了解环境",
+    "summary": "查看当前工作目录和文件以了解环境"
+  },
+  "readable": {
+    "title": "marathon-local-autoload-20260319-224302 · run-20260319-224306",
+    "summary": "查看当前工作目录和文件以了解环境",
+    "status": "completed",
+    "updated_at": "2026-03-19T14:43:20+0000"
+  },
+  "timeline": []
+}

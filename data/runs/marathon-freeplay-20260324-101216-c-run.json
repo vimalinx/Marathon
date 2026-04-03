@@ -1,0 +1,25 @@
+{
+  "generated_at": "2026-04-03T09:59:18+0800",
+  "summary": {
+    "public_run_id": "marathon-freeplay-20260324-101216-c-run",
+    "run_id": "marathon-freeplay-20260324-101216-c-run",
+    "title": "marathon-freeplay-20260324-101216-c · marathon-freeplay-20260324-101216-c-run",
+    "container": "marathon-freeplay-20260324-101216-c",
+    "agent_handle": null,
+    "agent_display_name": null,
+    "state": "failed",
+    "is_live": false,
+    "mode": "freeplay",
+    "updated_at": "2026-03-24T04:50:57+0000",
+    "round_count": 740,
+    "preview": "Inspect the latest explicit skip-path retry log and then probe whether checkout-index --prefix can materialize the same skip-worktree paths when --ignore-skip-worktree-bits is added, comparing in-cone versus skip-worktree behavior.",
+    "summary": "Inspect the latest explicit skip-path retry log and then probe whether checkout-index --prefix can materialize the same skip-worktree paths when --ignore-skip-worktree-bits is added, comparing in-cone versus skip-worktree behavior."
+  },
+  "readable": {
+    "title": "marathon-freeplay-20260324-101216-c · marathon-freeplay-20260324-101216-c-run",
+    "summary": "Inspect the latest explicit skip-path retry log and then probe whether checkout-index --prefix can materialize the same skip-worktree paths when --ignore-skip-worktree-bits is added, comparing in-cone versus skip-worktree behavior.",
+    "status": "failed",
+    "updated_at": "2026-03-24T04:50:57+0000"
+  },
+  "timeline": []
+}

@@ -1,0 +1,25 @@
+{
+  "generated_at": "2026-04-03T09:59:18+0800",
+  "summary": {
+    "public_run_id": "probe-supervised-20260322-1550",
+    "run_id": "probe-supervised-20260322-1550",
+    "title": "marathon-play-20260322-2219 · probe-supervised-20260322-1550",
+    "container": "marathon-play-20260322-2219",
+    "agent_handle": null,
+    "agent_display_name": null,
+    "state": "completed",
+    "is_live": false,
+    "mode": "task",
+    "updated_at": "2026-03-22T15:53:08+0000",
+    "round_count": 1,
+    "preview": "Survey the repo root and inspect the provided agent tool and loop sources to understand the environment and prompt plumbing.",
+    "summary": "Survey the repo root and inspect the provided agent tool and loop sources to understand the environment and prompt plumbing."
+  },
+  "readable": {
+    "title": "marathon-play-20260322-2219 · probe-supervised-20260322-1550",
+    "summary": "Survey the repo root and inspect the provided agent tool and loop sources to understand the environment and prompt plumbing.",
+    "status": "completed",
+    "updated_at": "2026-03-22T15:53:08+0000"
+  },
+  "timeline": []
+}

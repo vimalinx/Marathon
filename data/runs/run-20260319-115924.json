@@ -1,0 +1,25 @@
+{
+  "generated_at": "2026-04-03T09:59:18+0800",
+  "summary": {
+    "public_run_id": "run-20260319-115924",
+    "run_id": "run-20260319-115924",
+    "title": "marathon-stub-smoke-20260319-115922 · run-20260319-115924",
+    "container": "marathon-stub-smoke-20260319-115922",
+    "agent_handle": null,
+    "agent_display_name": null,
+    "state": "completed",
+    "is_live": false,
+    "mode": "task",
+    "updated_at": "2026-03-19T03:59:28+0000",
+    "round_count": 1,
+    "preview": "write stub smoke artifact",
+    "summary": "write stub smoke artifact"
+  },
+  "readable": {
+    "title": "marathon-stub-smoke-20260319-115922 · run-20260319-115924",
+    "summary": "write stub smoke artifact",
+    "status": "completed",
+    "updated_at": "2026-03-19T03:59:28+0000"
+  },
+  "timeline": []
+}

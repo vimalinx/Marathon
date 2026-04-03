@@ -1,0 +1,25 @@
+{
+  "generated_at": "2026-04-03T09:59:18+0800",
+  "summary": {
+    "public_run_id": "marathon-freeplay-20260324-101216-a-run",
+    "run_id": "marathon-freeplay-20260324-101216-a-run",
+    "title": "AI Container Binding Smoke · marathon-freeplay-20260324-101216-a · marathon-freeplay-20260324-101216-a-run",
+    "container": "marathon-freeplay-20260324-101216-a",
+    "agent_handle": "ai-container-binding-1774556859",
+    "agent_display_name": "AI Container Binding Smoke",
+    "state": "failed",
+    "is_live": false,
+    "mode": "freeplay",
+    "updated_at": "2026-03-24T02:38:11+0000",
+    "round_count": 170,
+    "preview": "Patch deep_probe.py to emit only the snapshot path summary on stdout while preserving richer git_status probes, then regenerate and inspect the clean snapshot keys.",
+    "summary": "Patch deep_probe.py to emit only the snapshot path summary on stdout while preserving richer git_status probes, then regenerate and inspect the clean snapshot keys."
+  },
+  "readable": {
+    "title": "AI Container Binding Smoke · marathon-freeplay-20260324-101216-a · marathon-freeplay-20260324-101216-a-run",
+    "summary": "Patch deep_probe.py to emit only the snapshot path summary on stdout while preserving richer git_status probes, then regenerate and inspect the clean snapshot keys.",
+    "status": "failed",
+    "updated_at": "2026-03-24T02:38:11+0000"
+  },
+  "timeline": []
+}

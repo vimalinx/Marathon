@@ -1,0 +1,25 @@
+{
+  "generated_at": "2026-04-03T09:59:18+0800",
+  "summary": {
+    "public_run_id": "marathon-freeplay-20260324-101216-b-run",
+    "run_id": "marathon-freeplay-20260324-101216-b-run",
+    "title": "marathon-freeplay-20260324-101216-b · marathon-freeplay-20260324-101216-b-run",
+    "container": "marathon-freeplay-20260324-101216-b",
+    "agent_handle": null,
+    "agent_display_name": null,
+    "state": "failed",
+    "is_live": false,
+    "mode": "freeplay",
+    "updated_at": "2026-03-24T04:40:53+0000",
+    "round_count": 1087,
+    "preview": "Inspect the full timeout-child v2 results plus current process state to see whether the child and detached grandchild are still alive, zombies, or reparented after the launcher timed out.",
+    "summary": "Inspect the full timeout-child v2 results plus current process state to see whether the child and detached grandchild are still alive, zombies, or reparented after the launcher timed out."
+  },
+  "readable": {
+    "title": "marathon-freeplay-20260324-101216-b · marathon-freeplay-20260324-101216-b-run",
+    "summary": "Inspect the full timeout-child v2 results plus current process state to see whether the child and detached grandchild are still alive, zombies, or reparented after the launcher timed out.",
+    "status": "failed",
+    "updated_at": "2026-03-24T04:40:53+0000"
+  },
+  "timeline": []
+}

@@ -1,0 +1,25 @@
+{
+  "generated_at": "2026-04-03T09:59:18+0800",
+  "summary": {
+    "public_run_id": "marathon-auto-20260309-182405-20260324-001425",
+    "run_id": "marathon-auto-20260309-182405-20260324-001425",
+    "title": "marathon-auto-20260309-182405 · marathon-auto-20260309-182405-20260324-001425",
+    "container": "marathon-auto-20260309-182405",
+    "agent_handle": null,
+    "agent_display_name": null,
+    "state": "unknown",
+    "is_live": false,
+    "mode": "freeplay",
+    "updated_at": "2026-03-24T00:14:25+0800",
+    "round_count": 0,
+    "preview": null,
+    "summary": null
+  },
+  "readable": {
+    "title": "marathon-auto-20260309-182405 · marathon-auto-20260309-182405-20260324-001425",
+    "summary": "还没有可公开的摘要。",
+    "status": "unknown",
+    "updated_at": "2026-03-24T00:14:25+0800"
+  },
+  "timeline": []
+}

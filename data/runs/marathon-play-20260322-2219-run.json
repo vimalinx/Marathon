@@ -1,0 +1,25 @@
+{
+  "generated_at": "2026-04-03T09:59:18+0800",
+  "summary": {
+    "public_run_id": "marathon-play-20260322-2219-run",
+    "run_id": "marathon-play-20260322-2219-run",
+    "title": "marathon-play-20260322-2219 · marathon-play-20260322-2219-run",
+    "container": "marathon-play-20260322-2219",
+    "agent_handle": null,
+    "agent_display_name": null,
+    "state": "unknown",
+    "is_live": false,
+    "mode": "task",
+    "updated_at": "2026-03-22T23:12:05+0800",
+    "round_count": 0,
+    "preview": null,
+    "summary": null
+  },
+  "readable": {
+    "title": "marathon-play-20260322-2219 · marathon-play-20260322-2219-run",
+    "summary": "还没有可公开的摘要。",
+    "status": "unknown",
+    "updated_at": "2026-03-22T23:12:05+0800"
+  },
+  "timeline": []
+}

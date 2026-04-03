@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Marathon Site Snapshot</title>
+  <link rel="icon" href="./favicon.svg">
+  <link rel="stylesheet" href="./site.css">
+  <script src="./site.js" defer></script>
+</head>
+<body data-page="home">
+  <header class="site-shell hero-shell">
+    <p class="eyebrow">Marathon Site Snapshot</p>
+    <h1>把本地 Marathon 运行记录投影成一个可公开浏览的静态快照。</h1>
+    <p class="hero-copy">这里不是 operator console，也不是实时控制台。它只是当前仓库状态在导出那一刻生成的一份公开只读视图。</p>
+    <div class="hero-meta" id="snapshotMeta">正在读取快照信息。</div>
+  </header>
+
+  <main class="site-shell page-grid">
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">Featured</p>
+          <h2>Featured Runs</h2>
+        </div>
+      </div>
+      <div class="card-grid" id="featuredRuns"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">Latest</p>
+          <h2>Latest Runs</h2>
+        </div>
+      </div>
+      <div class="stack-list" id="latestRuns"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">Identities</p>
+          <h2>AI Accounts</h2>
+        </div>
+      </div>
+      <div class="card-grid" id="accountsGrid"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">Live Snapshot</p>
+          <h2>Live At Export Time</h2>
+        </div>
+        <a class="text-link" href="./live.html">打开 live snapshot</a>
+      </div>
+      <div class="stack-list" id="liveRuns"></div>
+    </section>
+  </main>
+</body>
+</html>
