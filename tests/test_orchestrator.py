@@ -23,6 +23,23 @@ class ParseArgsTests(unittest.TestCase):
             args = orchestrator.parse_args()
         self.assertEqual(args.task_prompt, "repair the sandbox incrementally")
 
+    def test_parse_args_accepts_runtime_budget_flags(self) -> None:
+        argv = [
+            "orchestrator.py",
+            "--container",
+            "sandbox-1",
+            "--api-key",
+            "test-key",
+            "--max-runtime-seconds",
+            "900",
+            "--max-total-tokens",
+            "12000",
+        ]
+        with mock.patch.object(sys, "argv", argv):
+            args = orchestrator.parse_args()
+        self.assertEqual(args.max_runtime_seconds, 900)
+        self.assertEqual(args.max_total_tokens, 12000)
+
 
 class BaseUrlConnectivityTests(unittest.TestCase):
     def test_wait_for_container_base_url_retries_until_connectivity_succeeds(self) -> None:
@@ -61,6 +78,8 @@ class StartAgentLaunchTests(unittest.TestCase):
                 model_settings_json='{"reasoning_effort":"high"}',
                 max_rounds=0,
                 sleep_seconds=1.0,
+                max_runtime_seconds=600,
+                max_total_tokens=12000,
             )
 
         self.assertEqual(result["returncode"], 0)
@@ -71,6 +90,10 @@ class StartAgentLaunchTests(unittest.TestCase):
         self.assertIn("/opt/marathon/agent_loop.py", command[2])
         self.assertIn("explore freely", command)
         self.assertIn('{"reasoning_effort":"high"}', command)
+        self.assertIn("MAX_RUNTIME_SECONDS", command[2])
+        self.assertIn("MAX_TOTAL_TOKENS", command[2])
+        self.assertIn("600", command)
+        self.assertIn("12000", command)
 
 
 class ContainerBlogArchiveTests(unittest.TestCase):
@@ -108,6 +131,40 @@ class ContainerBlogArchiveTests(unittest.TestCase):
             self.assertIsNotNone(meta)
             self.assertEqual(meta["latest_round"], 2)
             self.assertEqual(meta["post_count"], 2)
+
+
+class SyncRoundArtifactsTests(unittest.TestCase):
+    def test_sync_files_mirrors_invalid_response_artifacts(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            host_run_dir = Path(tmpdir) / "run-1"
+            host_run_dir.mkdir(parents=True)
+            (host_run_dir / "status.json").write_text(
+                '{"completed_rounds": 3, "failed_round": 4}\n',
+                encoding="utf-8",
+            )
+
+            def fake_read(container: str, path: str) -> str | None:
+                if path.endswith("/status.json"):
+                    return '{"completed_rounds": 3, "failed_round": 4}\n'
+                if path.endswith("/rounds/0004/response.invalid-01.txt"):
+                    return "bad raw response"
+                if path.endswith("/rounds/0004/response.invalid-01.raw.json"):
+                    return '{"choices":[]}\n'
+                if path.endswith("/rounds/0004/error.json"):
+                    return '{"round":4,"error":"bad json"}\n'
+                return None
+
+            with mock.patch.object(orchestrator, "read_container_file", side_effect=fake_read):
+                orchestrator.sync_files("sandbox-1", "/workspace/runtime-log/run-1", host_run_dir)
+
+            self.assertEqual(
+                (host_run_dir / "rounds" / "0004" / "response.invalid-01.txt").read_text(encoding="utf-8"),
+                "bad raw response",
+            )
+            self.assertIn(
+                "bad json",
+                (host_run_dir / "rounds" / "0004" / "error.json").read_text(encoding="utf-8"),
+            )
 
 
 class ContainerAccountMirrorTests(unittest.TestCase):

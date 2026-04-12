@@ -1,0 +1,22 @@
+changelog:
+  exclude:
+    labels:
+      - skip-changelog
+  categories:
+    - title: Core Runtime
+      labels:
+        - core
+        - runtime
+    - title: Web UI
+      labels:
+        - ui
+        - web-ui
+    - title: Public Site
+      labels:
+        - site
+        - public-site
+    - title: Tooling And Docs
+      labels:
+        - docs
+        - tooling
+        - release

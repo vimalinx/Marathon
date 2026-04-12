@@ -33,29 +33,12 @@
     time.className = 'table-main';
     time.textContent = formatTime(container?.latest_blog_updated_at || active?.updated_at || latest?.updated_at);
 
-    const stack = document.createElement('div');
-    stack.className = 'table-blog';
+    const summary = document.createElement('div');
+    summary.className = 'table-blog-copy';
+    const doneText = sections.done || active?.latest_action_done || latest?.latest_action_done || '';
+    summary.textContent = doneText ? (doneText.length > 80 ? doneText.slice(0, 79) + '…' : doneText) : '-';
 
-    [
-      { label: 'Done', text: sections.done || active?.latest_action_done || latest?.latest_action_done || '还没有博客记录。' },
-      { label: 'Next', text: sections.next || active?.latest_action_next || latest?.latest_action_next || '下一步还没有写出来。' },
-      { label: 'Thought', text: sections.thought || active?.latest_action_thought || latest?.latest_action_thought || '这一轮的思路还没有写出来。' },
-    ].forEach((item) => {
-      const block = document.createElement('div');
-      block.className = 'table-blog-block';
-
-      const label = document.createElement('strong');
-      label.textContent = item.label;
-
-      const text = document.createElement('div');
-      text.className = 'table-blog-copy';
-      text.textContent = item.text;
-
-      block.append(label, text);
-      stack.append(block);
-    });
-
-    cell.append(time, stack);
+    cell.append(time, summary);
     return cell;
   }
 
@@ -94,7 +77,7 @@
 
       const sandboxCell = cell(
         container.name,
-        current === container.name ? '当前选中' : '去看这个容器的详情',
+        current === container.name ? '当前选中' : '',
       );
 
       const containerCell = cell(
@@ -111,17 +94,17 @@
 
       const actionCell = document.createElement('td');
       const actionWrap = document.createElement('div');
-      actionWrap.className = 'card-actions';
+      actionWrap.style.cssText = 'display:flex;gap:0.5rem;align-items:center;';
 
       const detailLink = document.createElement('a');
       detailLink.className = 'nav-link button-primary';
       detailLink.href = `/container?container=${encodeURIComponent(container.name)}`;
-      detailLink.textContent = '看详情';
+      detailLink.textContent = '详情';
 
       const newLink = document.createElement('a');
       newLink.className = 'nav-link';
       newLink.href = `/new?base=${encodeURIComponent(container.name)}`;
-      newLink.textContent = '基于此新建';
+      newLink.textContent = '新建';
 
       actionWrap.append(detailLink, newLink);
       actionCell.append(actionWrap);

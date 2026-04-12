@@ -42,6 +42,17 @@ DEFAULT_SYNC_FILES = [
     'live.stderr',
     'agent.pid',
 ]
+ROUND_ARTIFACT_FILENAMES = (
+    'error.json',
+    'response.invalid-01.txt',
+    'response.invalid-01.raw.json',
+    'response.invalid-02.txt',
+    'response.invalid-02.raw.json',
+    'response.invalid-03.txt',
+    'response.invalid-03.raw.json',
+    'response.invalid-04.txt',
+    'response.invalid-04.raw.json',
+)
 
 
 def run_host_command(argv: list[str], *, input_text: str | None = None, check: bool = False) -> subprocess.CompletedProcess[str]:
@@ -194,6 +205,8 @@ def start_agent(
     model_settings_json: str,
     max_rounds: int,
     sleep_seconds: float,
+    max_runtime_seconds: int | None,
+    max_total_tokens: int | None,
 ) -> dict[str, object]:
     run_dir = f'/workspace/runtime-log/{run_id}'
     pid_path = f'{run_dir}/agent.pid'
@@ -215,6 +228,8 @@ env.update(
         'MARATHON_MODEL_SETTINGS_JSON': sys.argv[8],
         'MAX_ROUNDS': sys.argv[9],
         'ROUND_SLEEP_SECONDS': sys.argv[10],
+        'MAX_RUNTIME_SECONDS': sys.argv[11],
+        'MAX_TOTAL_TOKENS': sys.argv[12],
     }
 )
 os.makedirs(run_dir, exist_ok=True)
@@ -248,6 +263,8 @@ with open(pid_path, 'w', encoding='utf-8') as handle:
         model_settings_json,
         str(max_rounds),
         str(sleep_seconds),
+        str(max_runtime_seconds or 0),
+        str(max_total_tokens or 0),
     ]
     completed = lxc_attach(container, command)
     return {
@@ -275,6 +292,28 @@ def sync_files(container: str, container_run_dir: str, host_run_dir: Path) -> No
         if content is None:
             continue
         (host_run_dir / filename).write_text(content, encoding='utf-8')
+    sync_round_artifacts(container, container_run_dir, host_run_dir)
+
+
+def sync_round_artifacts(container: str, container_run_dir: str, host_run_dir: Path) -> None:
+    status = read_json(host_run_dir / 'status.json') or {}
+    round_limit = 0
+    for key in ('failed_round', 'completed_rounds', 'last_round'):
+        value = status.get(key)
+        if isinstance(value, int) and value > round_limit:
+            round_limit = value
+    round_limit = max(round_limit + 1, 1)
+
+    for round_index in range(1, round_limit + 1):
+        round_name = f'{round_index:04d}'
+        for filename in ROUND_ARTIFACT_FILENAMES:
+            container_path = f'{container_run_dir}/rounds/{round_name}/{filename}'
+            content = read_container_file(container, container_path)
+            if content is None:
+                continue
+            target = host_run_dir / 'rounds' / round_name / filename
+            ensure_dir(target.parent)
+            target.write_text(content, encoding='utf-8')
 
 
 def parse_round_value(value: object) -> int | None:
@@ -514,6 +553,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--prompt-target', default=DEFAULT_PROMPT_TARGET)
     parser.add_argument('--max-rounds', type=int, default=int(os.environ.get('MAX_ROUNDS', '0')), help='0 means infinite')
     parser.add_argument('--sleep-seconds', type=float, default=float(os.environ.get('ROUND_SLEEP_SECONDS', '1')))
+    parser.add_argument('--max-runtime-seconds', type=int, default=int(os.environ.get('MAX_RUNTIME_SECONDS', '0')))
+    parser.add_argument('--max-total-tokens', type=int, default=int(os.environ.get('MAX_TOTAL_TOKENS', '0')))
     parser.add_argument('--sync-interval', type=float, default=float(os.environ.get('MARATHON_SYNC_INTERVAL', '2')))
     return parser.parse_args()
 
@@ -544,6 +585,8 @@ def main() -> None:
         'started_at': time.strftime('%Y-%m-%dT%H:%M:%S%z'),
         'max_rounds': args.max_rounds,
         'sleep_seconds': args.sleep_seconds,
+        'max_runtime_seconds': args.max_runtime_seconds or None,
+        'max_total_tokens': args.max_total_tokens or None,
         'sync_interval': args.sync_interval,
         'runtime': 'agent-inside-container',
         'prompt_source': str(prompt_source),
@@ -582,6 +625,8 @@ def main() -> None:
         model_settings_json=args.model_settings_json or '{}',
         max_rounds=args.max_rounds,
         sleep_seconds=args.sleep_seconds,
+        max_runtime_seconds=args.max_runtime_seconds or None,
+        max_total_tokens=args.max_total_tokens or None,
     )
     write_json(host_run_dir / 'launch.json', launch)
     git_commit(host_run_dir, 'run launched')

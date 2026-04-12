@@ -374,11 +374,11 @@
     copy.append(
       renderTease(
         '刚刚完成',
-        item.run || latestPost(item) ? truncateText(runMotion(item), 220) : '这个容器还没有任务记录。',
+        item.run || latestPost(item) ? truncateText(runMotion(item), 120) : '还没有任务记录。',
       ),
       renderTease(
         '接下来',
-        item.run || latestPost(item) ? truncateText(runIntent(item), 150) : '等它跑起来之后，这里会显示下一步。',
+        item.run || latestPost(item) ? truncateText(runIntent(item), 100) : '等它跑起来后会显示。',
         'featured-card-block featured-card-block-accent',
       ),
     );
@@ -389,21 +389,14 @@
     const meta = document.createElement('dl');
     meta.className = 'featured-meta';
     meta.append(
-      metaItem('更新时间', updatedAt(item) ? formatTime(updatedAt(item)) : '-'),
-      metaItem('已完成轮次', latestRoundLabel(item)),
+      metaItem('更新', updatedAt(item) ? formatTime(updatedAt(item)) : '-'),
+      metaItem('轮次', latestRoundLabel(item)),
       metaItem('模型', item.run?.model || '-'),
-      metaItem('博客篇数', String(item.container?.blog_post_count ?? '-')),
-      metaItem('浏览提示', '点整张卡片进入'),
     );
 
     const actions = document.createElement('div');
     actions.className = 'featured-actions';
-
-    const hint = document.createElement('span');
-    hint.className = 'card-hint';
-    hint.textContent = item.isLive ? '优先看这张卡，进去就是最新 round。' : '点卡片进入容器时间线。';
-
-    actions.append(hint, actionLink(newHref(item.container.name), '基于此新建', 'nav-link'));
+    actions.append(actionLink(newHref(item.container.name), '基于此新建', 'nav-link'));
 
     foot.append(meta, actions);
     article.append(head, copy, foot);
@@ -445,16 +438,10 @@
     const summaryLead = document.createElement('p');
     summaryLead.className = 'card-summary-main';
     summaryLead.textContent = item.run || latestPost(item)
-      ? truncateText(runMotion(item), 150)
-      : '这个容器还没有任务记录。';
+      ? truncateText(runMotion(item), 100)
+      : '还没有任务记录。';
 
-    const summaryNext = document.createElement('p');
-    summaryNext.className = 'card-summary-next';
-    summaryNext.textContent = item.run || latestPost(item)
-      ? `下一步：${truncateText(runIntent(item), 96)}`
-      : '等它跑起来之后，这里会显示下一步。';
-
-    summary.append(summaryLead, summaryNext);
+    summary.append(summaryLead);
 
     const foot = document.createElement('div');
     foot.className = 'browser-card-foot';
@@ -462,19 +449,12 @@
     const meta = document.createElement('div');
     meta.className = 'browser-card-meta';
     meta.textContent = updatedAt(item)
-      ? `最近更新：${formatTime(updatedAt(item))} · 博客 ${item.container?.blog_post_count ?? 0} 篇`
-      : item.isRunning
-        ? '容器已启动，但还没有任务记录'
-        : '暂时还没有历史';
+      ? `${formatTime(updatedAt(item))}`
+      : item.isRunning ? '已启动' : '-';
 
     const actions = document.createElement('div');
     actions.className = 'card-actions';
-
-    const hint = document.createElement('span');
-    hint.className = 'card-hint';
-    hint.textContent = '点卡片进入时间线';
-
-    actions.append(hint, actionLink(newHref(item.container.name), '基于此新建', 'nav-link'));
+    actions.append(actionLink(newHref(item.container.name), '基于此新建', 'nav-link'));
 
     foot.append(meta, actions);
     article.append(titleWrap, statusRow, summary, foot);
@@ -492,11 +472,7 @@
     const note = document.createElement('p');
     note.textContent = '开一个新的容器，或者从现有容器复制出新的实验分支。';
 
-    const hint = document.createElement('span');
-    hint.className = 'card-hint';
-    hint.textContent = '点整张卡片进入新建任务。';
-
-    article.append(title, note, hint);
+    article.append(title, note);
     return article;
   }
 

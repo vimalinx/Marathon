@@ -5,8 +5,8 @@ import shlex
 from pathlib import Path
 from typing import MutableMapping
 
-LEGACY_DEFAULT_BASE_URL = "http://49.235.88.239:3000/v1"
-LEGACY_DEFAULT_MODEL = "gpt-5.4"
+LEGACY_DEFAULT_BASE_URL = ""
+LEGACY_DEFAULT_MODEL = ""
 DEFAULT_MODEL_ENV_PATH = Path("~/.config/marathon/model.env").expanduser()
 MANAGED_KEYS = (
     "MARATHON_BASE_URL",

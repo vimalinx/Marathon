@@ -14,6 +14,7 @@ from typing import Callable
 
 import container.agent_loop as agent_loop
 import host.host_nightly as host_nightly
+import host.ingest_api as ingest_api
 import host.model_env as model_env
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -52,7 +53,10 @@ def runtime_env(*, repo_path: Path, run_dir: Path, prompt_file: Path, tool_file:
 
 
 def update_status(run_dir: Path, payload: dict[str, object]) -> None:
-    host_nightly.write_json(run_dir / "status.json", payload)
+    ingest_api.write_run_payload(
+        {"run_id": run_dir.name, "status": payload},
+        runs_dir=run_dir.parent,
+    )
 
 
 def write_round_artifacts(
@@ -62,47 +66,56 @@ def write_round_artifacts(
     round_result: dict[str, object],
     committed: bool,
 ) -> None:
-    round_dir = run_dir / "rounds" / f"{round_index:04d}"
-    host_nightly.ensure_dir(round_dir)
-
-    request_payload = round_result.get("request")
-    if request_payload is not None:
-        host_nightly.write_json(round_dir / "request.json", request_payload)
-
-    response_text = str(round_result.get("response_text", ""))
-    (round_dir / "response.txt").write_text(response_text, encoding="utf-8")
-
-    raw_response = round_result.get("raw_response")
-    if raw_response is not None:
-        host_nightly.write_json(round_dir / "response_raw.json", raw_response)
-
     action = round_result.get("action", {})
     tool_result = round_result.get("tool_result", {})
     state_before = round_result.get("state_before", {})
     state_after = round_result.get("state_after", {})
+    response_text = str(round_result.get("response_text", ""))
 
-    host_nightly.write_json(round_dir / "action.json", action)
-    host_nightly.write_json(round_dir / "tool_result.json", tool_result)
-    host_nightly.write_json(round_dir / "state_before.json", state_before)
-    host_nightly.write_json(round_dir / "state_after.json", state_after)
-    host_nightly.write_json(
-        round_dir / "commit.json",
-        {"committed": committed, "summary": round_result.get("summary", "")},
-    )
-
-    host_nightly.write_json(run_dir / "latest_action.json", action)
-    host_nightly.write_json(run_dir / "latest_tool_result.json", tool_result)
-    host_nightly.write_json(run_dir / "latest_state_before.json", state_before)
-    host_nightly.write_json(run_dir / "latest_state_after.json", state_after)
-    host_nightly.write_json(
-        run_dir / "latest_round.json",
+    ingest_api.append_round_posts_payload(
         {
-            "round": round_index,
-            "summary": round_result.get("summary"),
-            "committed": committed,
+            "run_id": run_dir.name,
+            "posts": [
+                {
+                    "round": round_index,
+                    "summary": round_result.get("summary"),
+                    "done": action.get("done") or action.get("summary"),
+                    "next": action.get("next"),
+                    "thought": action.get("thought"),
+                    "argv": action.get("argv"),
+                    "timeout": action.get("timeout"),
+                    "ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                }
+            ],
         },
+        runs_dir=run_dir.parent,
     )
-    (run_dir / "latest_response.txt").write_text(response_text, encoding="utf-8")
+
+    artifacts: list[dict[str, object]] = [
+        {"round": round_index, "name": "action.json", "content": action},
+        {"round": round_index, "name": "tool_result.json", "content": tool_result},
+        {"round": round_index, "name": "state_before.json", "content": state_before},
+        {"round": round_index, "name": "state_after.json", "content": state_after},
+        {"round": round_index, "name": "commit.json", "content": {"committed": committed, "summary": round_result.get("summary", "")}},
+        {"name": "latest_tool_result.json", "content": tool_result},
+        {"name": "latest_state_before.json", "content": state_before},
+        {"name": "latest_state_after.json", "content": state_after},
+        {"name": "latest_response.txt", "content": response_text},
+        {"round": round_index, "name": "response.txt", "content": response_text},
+    ]
+
+    request_payload = round_result.get("request")
+    if request_payload is not None:
+        artifacts.append({"round": round_index, "name": "request.json", "content": request_payload})
+
+    raw_response = round_result.get("raw_response")
+    if raw_response is not None:
+        artifacts.append({"round": round_index, "name": "response_raw.json", "content": raw_response})
+
+    ingest_api.write_artifacts_payload(
+        {"run_id": run_dir.name, "artifacts": artifacts},
+        runs_dir=run_dir.parent,
+    )
 
 
 def execute_agent_round(
@@ -190,7 +203,7 @@ def run_host_nightly(
         "deadline_time": deadline.isoformat(),
         "runtime": "host-nightly",
     }
-    host_nightly.write_json(run_dir / "run.json", metadata)
+    ingest_api.write_run_payload({"run_id": run_id, "run": metadata}, runs_dir=run_dir.parent)
     update_status(
         run_dir,
         {
@@ -200,9 +213,12 @@ def run_host_nightly(
             "updated_at": started_at.isoformat(),
         },
     )
-    host_nightly.append_jsonl(
-        run_dir / "events.jsonl",
-        {"event": "run_started", "run_id": run_id, "repo_path": str(repo_path), "ts": time.time()},
+    ingest_api.append_events_payload(
+        {
+            "run_id": run_id,
+            "events": [{"event": "run_started", "run_id": run_id, "repo_path": str(repo_path), "ts": time.time()}],
+        },
+        runs_dir=run_dir.parent,
     )
 
     default_branch: str | None = None
@@ -227,7 +243,7 @@ def run_host_nightly(
         host_nightly.create_branch(repo_path, branch_name, start_point)
         metadata["default_branch"] = default_branch
         metadata["checkpointed_dirty"] = checkpointed_dirty
-        host_nightly.write_json(run_dir / "run.json", metadata)
+        ingest_api.write_run_payload({"run_id": run_id, "run": metadata}, runs_dir=run_dir.parent)
 
         if host_nightly.should_stop_for_deadline(started_at, deadline=deadline):
             state = "stopped_by_deadline"
@@ -247,15 +263,20 @@ def run_host_nightly(
                     committed=committed,
                 )
                 completed_rounds = round_index
-                host_nightly.append_jsonl(
-                    run_dir / "events.jsonl",
+                ingest_api.append_events_payload(
                     {
-                        "event": "round_completed",
-                        "round": round_index,
-                        "summary": summary,
-                        "committed": committed,
-                        "ts": time.time(),
+                        "run_id": run_id,
+                        "events": [
+                            {
+                                "event": "round_completed",
+                                "round": round_index,
+                                "summary": summary,
+                                "committed": committed,
+                                "ts": time.time(),
+                            }
+                        ],
                     },
+                    runs_dir=run_dir.parent,
                 )
                 update_status(
                     run_dir,
@@ -272,9 +293,12 @@ def run_host_nightly(
     except Exception as exc:
         state = "failed"
         error_message = str(exc)
-        host_nightly.append_jsonl(
-            run_dir / "events.jsonl",
-            {"event": "run_failed", "error": error_message, "ts": time.time()},
+        ingest_api.append_events_payload(
+            {
+                "run_id": run_id,
+                "events": [{"event": "run_failed", "error": error_message, "ts": time.time()}],
+            },
+            runs_dir=run_dir.parent,
         )
         raise
     finally:
@@ -287,14 +311,19 @@ def run_host_nightly(
         if error_message:
             final_status["error"] = error_message
         update_status(run_dir, final_status)
-        host_nightly.append_jsonl(
-            run_dir / "events.jsonl",
+        ingest_api.append_events_payload(
             {
-                "event": "run_finished",
-                "state": state,
-                "completed_rounds": completed_rounds,
-                "ts": time.time(),
+                "run_id": run_id,
+                "events": [
+                    {
+                        "event": "run_finished",
+                        "state": state,
+                        "completed_rounds": completed_rounds,
+                        "ts": time.time(),
+                    }
+                ],
             },
+            runs_dir=run_dir.parent,
         )
 
     return {

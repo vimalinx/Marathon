@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import http.client
 import json
 import mimetypes
 import os
@@ -18,9 +20,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+import urllib.error
+import urllib.request
 
 import host.lxc_network as lxc_network
 import host.model_env as model_env
+import host.ingest_api as ingest_api
+import host.run_index as run_index
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = ROOT_DIR / 'host' / 'static'
@@ -30,6 +36,7 @@ MODEL_PROFILES_FILE = ROOT_DIR / 'state' / 'model_profiles.json'
 CONTAINER_STATE_DIR = ROOT_DIR / 'state' / 'containers'
 CONTAINER_BLOG_DIR = ROOT_DIR / 'state' / 'container_blogs'
 AGENT_ACCOUNT_DIR = ROOT_DIR / 'state' / 'agent_accounts'
+CONTAINER_SETTINGS_BACKUP_DIR = ROOT_DIR / 'state' / 'container_settings_backups'
 
 model_env.load_model_env_defaults()
 
@@ -157,6 +164,20 @@ def first_text(*values: Any) -> str | None:
     return None
 
 
+def first_non_null(*values: Any) -> Any:
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
+def api_key_fingerprint(value: str | None) -> str | None:
+    token = str(value or '').strip()
+    if not token:
+        return None
+    return hashlib.sha256(token.encode('utf-8')).hexdigest()[:16]
+
+
 def preview_from_payload(payload: dict[str, Any] | None, *, limit: int = 280) -> str | None:
     if not isinstance(payload, dict):
         return None
@@ -235,19 +256,28 @@ def read_container_blog_posts(name: str, *, limit: int | None = None) -> list[di
 
 def container_blog_payload(name: str, *, limit: int | None = None) -> dict[str, Any]:
     require_name(name, field='container name')
-    posts = read_container_blog_posts(name, limit=limit)
-    meta = read_container_blog_meta(name)
-    return {
-        'container': name,
-        'blog_posts': posts,
-        'latest_blog_post': posts[0] if posts else None,
-        'blog_meta': {
-            **meta,
+    try:
+        return run_index.get_container_blog_payload(
+            name,
+            limit=limit,
+            runs_dir=RUNS_DIR,
+            container_blog_dir=CONTAINER_BLOG_DIR,
+            agent_account_dir=AGENT_ACCOUNT_DIR,
+        )
+    except Exception:
+        posts = read_container_blog_posts(name, limit=limit)
+        meta = read_container_blog_meta(name)
+        return {
             'container': name,
-            'post_count': meta.get('post_count', len(posts)),
-            'updated_at': meta.get('updated_at') or (posts[0].get('ts') if posts else None),
-        },
-    }
+            'blog_posts': posts,
+            'latest_blog_post': posts[0] if posts else None,
+            'blog_meta': {
+                **meta,
+                'container': name,
+                'post_count': meta.get('post_count', len(posts)),
+                'updated_at': meta.get('updated_at') or (posts[0].get('ts') if posts else None),
+            },
+        }
 
 
 def container_state_path(name: str) -> Path:
@@ -320,6 +350,25 @@ def extract_agent_write_credentials(headers: Any, payload: dict[str, Any]) -> tu
     return auth_token, instance_id
 
 
+def extract_ingest_token(headers: Any, payload: dict[str, Any]) -> str | None:
+    return first_text(
+        payload.get('ingest_token'),
+        headers.get('X-Marathon-Ingest-Token') if headers is not None else None,
+        bearer_token(headers.get('Authorization')) if headers is not None else None,
+    )
+
+
+def require_ingest_token(headers: Any, payload: dict[str, Any]) -> None:
+    expected = str(os.environ.get('MARATHON_INGEST_TOKEN', '')).strip()
+    if not expected:
+        return
+    provided = extract_ingest_token(headers, payload)
+    if not provided:
+        raise PermissionError('ingestion token required')
+    if provided != expected:
+        raise PermissionError('invalid ingestion token')
+
+
 def normalize_agent_post(payload: dict[str, Any] | None, *, agent_handle: str) -> dict[str, Any] | None:
     if not isinstance(payload, dict):
         return None
@@ -358,18 +407,36 @@ def read_agent_account_posts(handle: str, *, limit: int | None = None) -> list[d
 
 def agent_account_payload(handle: str, *, limit: int | None = None) -> dict[str, Any]:
     require_name(handle, field='agent handle')
-    account = read_agent_account(handle)
-    if account is None:
+    try:
+        detail = run_index.get_agent_account_payload(
+            handle,
+            limit=limit,
+            runs_dir=RUNS_DIR,
+            container_blog_dir=CONTAINER_BLOG_DIR,
+            agent_account_dir=AGENT_ACCOUNT_DIR,
+        )
+        return {
+            'account': public_agent_account(detail.get('account')),
+            'posts': detail.get('posts') or [],
+            'latest_post': detail.get('latest_post'),
+            'latest_preview': detail.get('latest_preview'),
+            'post_count': detail.get('post_count', 0),
+        }
+    except FileNotFoundError:
         raise ValueError(f'agent account not found: {handle}')
-    posts = read_agent_account_posts(handle, limit=limit)
-    latest_post = posts[0] if posts else None
-    return {
-        'account': public_agent_account(account),
-        'posts': posts,
-        'latest_post': latest_post,
-        'latest_preview': preview_from_payload(latest_post, limit=600),
-        'post_count': len(posts),
-    }
+    except Exception:
+        account = read_agent_account(handle)
+        if account is None:
+            raise ValueError(f'agent account not found: {handle}')
+        posts = read_agent_account_posts(handle, limit=limit)
+        latest_post = posts[0] if posts else None
+        return {
+            'account': public_agent_account(account),
+            'posts': posts,
+            'latest_post': latest_post,
+            'latest_preview': preview_from_payload(latest_post, limit=600),
+            'post_count': len(posts),
+        }
 
 
 def list_agent_handles() -> list[str]:
@@ -379,30 +446,39 @@ def list_agent_handles() -> list[str]:
 
 
 def agent_accounts_payload() -> dict[str, Any]:
-    ensure_dir(AGENT_ACCOUNT_DIR)
-    accounts: list[dict[str, Any]] = []
-    for handle in list_agent_handles():
-        try:
-            detail = agent_account_payload(handle)
-        except ValueError:
-            continue
-        account = detail['account']
-        accounts.append(
-            {
-                **account,
-                'latest_post': detail['latest_post'],
-                'latest_preview': detail['latest_preview'],
-                'post_count': detail['post_count'],
-            }
+    try:
+        payload = run_index.list_agent_accounts_payload(
+            runs_dir=RUNS_DIR,
+            container_blog_dir=CONTAINER_BLOG_DIR,
+            agent_account_dir=AGENT_ACCOUNT_DIR,
         )
-    accounts.sort(
-        key=lambda item: (
-            str((item.get('latest_post') or {}).get('ts') or item.get('updated_at') or item.get('created_at') or ''),
-            item.get('agent_handle') or '',
-        ),
-        reverse=True,
-    )
-    return {'accounts': accounts, 'updated_at': time.strftime('%Y-%m-%dT%H:%M:%S%z')}
+        payload['updated_at'] = time.strftime('%Y-%m-%dT%H:%M:%S%z')
+        return payload
+    except Exception:
+        ensure_dir(AGENT_ACCOUNT_DIR)
+        accounts: list[dict[str, Any]] = []
+        for handle in list_agent_handles():
+            try:
+                detail = agent_account_payload(handle)
+            except ValueError:
+                continue
+            account = detail['account']
+            accounts.append(
+                {
+                    **account,
+                    'latest_post': detail['latest_post'],
+                    'latest_preview': detail['latest_preview'],
+                    'post_count': detail['post_count'],
+                }
+            )
+        accounts.sort(
+            key=lambda item: (
+                str((item.get('latest_post') or {}).get('ts') or item.get('updated_at') or item.get('created_at') or ''),
+                item.get('agent_handle') or '',
+            ),
+            reverse=True,
+        )
+        return {'accounts': accounts, 'updated_at': time.strftime('%Y-%m-%dT%H:%M:%S%z')}
 
 
 def container_agent_binding_payload(name: str) -> dict[str, Any]:
@@ -771,6 +847,20 @@ def parse_float(value: Any, *, default: float) -> float:
     return float(value)
 
 
+def parse_non_negative_int(value: Any, *, default: int) -> int:
+    parsed = parse_int(value, default=default)
+    if parsed < 0:
+        raise ValueError('value must be non-negative')
+    return parsed
+
+
+def parse_non_negative_float(value: Any, *, default: float) -> float:
+    parsed = parse_float(value, default=default)
+    if parsed < 0:
+        raise ValueError('value must be non-negative')
+    return parsed
+
+
 def maybe_int(value: Any) -> int | None:
     if value in (None, '', 'max'):
         return None
@@ -1104,6 +1194,24 @@ def parse_optional_float(value: Any, *, default: float | None = None) -> float |
     return float(value)
 
 
+def parse_optional_non_negative_int(value: Any, *, default: int | None = None) -> int | None:
+    parsed = parse_optional_int(value, default=default)
+    if parsed is None:
+        return None
+    if parsed < 0:
+        raise ValueError('value must be non-negative')
+    return parsed
+
+
+def parse_optional_non_negative_float(value: Any, *, default: float | None = None) -> float | None:
+    parsed = parse_optional_float(value, default=default)
+    if parsed is None:
+        return None
+    if parsed < 0:
+        raise ValueError('value must be non-negative')
+    return parsed
+
+
 def normalize_extra_body(value: Any) -> dict[str, Any]:
     if value in (None, ''):
         return {}
@@ -1115,6 +1223,155 @@ def normalize_extra_body(value: Any) -> dict[str, Any]:
             raise ValueError('extra_body must decode to an object')
         return payload
     raise ValueError('extra_body must be an object or JSON string')
+
+
+def container_settings_backup_path(name: str, timestamp: str) -> Path:
+    require_name(name, field='container name')
+    return CONTAINER_SETTINGS_BACKUP_DIR / name / f'{timestamp}.json'
+
+
+def list_container_settings_backups(name: str, *, limit: int | None = None) -> list[dict[str, Any]]:
+    require_name(name, field='container name')
+    backup_dir = CONTAINER_SETTINGS_BACKUP_DIR / name
+    if not backup_dir.exists():
+        return []
+    paths = sorted((path for path in backup_dir.glob('*.json') if path.is_file()), reverse=True)
+    if limit is not None:
+        paths = paths[:limit]
+    items: list[dict[str, Any]] = []
+    for path in paths:
+        items.append(
+            {
+                'name': path.name,
+                'path': str(path),
+                'updated_at': time.strftime('%Y-%m-%dT%H:%M:%S%z', time.localtime(path.stat().st_mtime)),
+                'bytes': path.stat().st_size,
+            }
+        )
+    return items
+
+
+def container_settings_backup_summary(name: str) -> dict[str, Any]:
+    backups = list_container_settings_backups(name, limit=1)
+    latest = backups[0] if backups else None
+    backup_dir = CONTAINER_SETTINGS_BACKUP_DIR / name
+    count = len([path for path in backup_dir.glob('*.json') if path.is_file()]) if backup_dir.exists() else 0
+    return {
+        'count': count,
+        'latest': latest,
+    }
+
+
+def backup_container_state_meta(name: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+    require_name(name, field='container name')
+    source_path = container_state_path(name)
+    if not source_path.exists():
+        return None
+    timestamp = time.strftime('%Y%m%d-%H%M%S')
+    target_path = container_settings_backup_path(name, timestamp)
+    ensure_dir(target_path.parent)
+    write_json(target_path, payload)
+    return {
+        'name': target_path.name,
+        'path': str(target_path),
+        'updated_at': time.strftime('%Y-%m-%dT%H:%M:%S%z'),
+    }
+
+
+def normalize_container_agent_settings(payload: Any) -> dict[str, Any]:
+    if payload in (None, ''):
+        return {}
+    if not isinstance(payload, dict):
+        raise ValueError('agent_settings must be an object')
+
+    normalized: dict[str, Any] = {}
+
+    if first_text(payload.get('mode')):
+        normalized['mode'] = resolve_run_mode({'mode': payload.get('mode')})
+
+    for key in ('task_prompt', 'model', 'base_url', 'reasoning_effort'):
+        value = first_text(payload.get(key))
+        if value is not None:
+            normalized[key] = value
+
+    for key in ('temperature', 'top_p', 'request_timeout_seconds', 'request_retry_delay_seconds', 'sleep_seconds'):
+        value = parse_optional_non_negative_float(payload.get(key), default=None)
+        if value is not None:
+            normalized[key] = value
+
+    for key in ('max_completion_tokens', 'request_max_attempts', 'max_rounds', 'max_runtime_seconds', 'max_total_tokens'):
+        value = parse_optional_non_negative_int(payload.get(key), default=None)
+        if value is not None:
+            normalized[key] = value
+
+    if 'extra_body' in payload:
+        normalized['extra_body'] = normalize_extra_body(payload.get('extra_body'))
+
+    return normalized
+
+
+def container_agent_settings_from_meta(meta: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(meta, dict):
+        return {}
+    raw = meta.get('agent_settings')
+    if not isinstance(raw, dict):
+        return {}
+    try:
+        return normalize_container_agent_settings(raw)
+    except ValueError:
+        return {}
+
+
+def read_container_agent_settings(name: str) -> dict[str, Any]:
+    require_name(name, field='container name')
+    return container_agent_settings_from_meta(read_container_state_meta(name))
+
+
+def merge_container_agent_settings(name: str, payload: dict[str, Any]) -> dict[str, Any]:
+    require_name(name, field='container name')
+    saved = read_container_agent_settings(name)
+    if not saved:
+        return dict(payload)
+    merged = dict(saved)
+    merged.update(payload)
+    return merged
+
+
+def write_container_agent_settings(name: str, payload: dict[str, Any]) -> dict[str, Any]:
+    require_name(name, field='container name')
+    meta = read_container_state_meta(name)
+    current = container_agent_settings_from_meta(meta)
+    clear = bool(payload.get('clear'))
+    source = payload.get('agent_settings') if 'agent_settings' in payload else payload
+    updated = {} if clear else normalize_container_agent_settings(source)
+
+    if current == updated:
+        return {
+            'ok': True,
+            'container': name,
+            'settings': updated,
+            'backup': None,
+            'backup_summary': container_settings_backup_summary(name),
+            'updated_at': meta.get('agent_settings_updated_at'),
+        }
+
+    backup = backup_container_state_meta(name, meta) if meta else None
+    if updated:
+        meta['agent_settings'] = updated
+        meta['agent_settings_updated_at'] = time.strftime('%Y-%m-%dT%H:%M:%S%z')
+    else:
+        meta.pop('agent_settings', None)
+        meta.pop('agent_settings_updated_at', None)
+
+    write_container_state_meta(name, meta)
+    return {
+        'ok': True,
+        'container': name,
+        'settings': updated,
+        'backup': backup,
+        'backup_summary': container_settings_backup_summary(name),
+        'updated_at': meta.get('agent_settings_updated_at'),
+    }
 
 
 def resolve_task_prompt(payload: dict[str, Any]) -> str:
@@ -1142,13 +1399,13 @@ def apply_run_mode_defaults(payload: dict[str, Any], resolved: dict[str, Any]) -
         model_settings['request_max_attempts'] = 10
         model_settings['request_retry_delay_seconds'] = 2.0
         model_settings['extra_body'] = model_settings.get('extra_body') or {}
-        result['max_rounds'] = 0
-        result['sleep_seconds'] = 1.0
     else:
         result['task_prompt'] = resolve_task_prompt(payload)
-        result['max_rounds'] = parse_int(payload.get('max_rounds'), default=0)
-        result['sleep_seconds'] = parse_float(payload.get('sleep_seconds'), default=1.0)
 
+    result['max_rounds'] = parse_non_negative_int(payload.get('max_rounds'), default=0)
+    result['sleep_seconds'] = parse_non_negative_float(payload.get('sleep_seconds'), default=1.0)
+    result['max_runtime_seconds'] = parse_optional_non_negative_int(payload.get('max_runtime_seconds'), default=None)
+    result['max_total_tokens'] = parse_optional_non_negative_int(payload.get('max_total_tokens'), default=None)
     result['mode'] = mode
     result['model_settings'] = model_settings
     return result
@@ -1160,12 +1417,8 @@ def normalize_model_profile(payload: Any, *, fallback_id: str) -> dict[str, Any]
     profile_id = str(payload.get('id') or fallback_id).strip()
     require_name(profile_id, field='model profile id')
     label = str(payload.get('label') or profile_id).strip()
-    model = str(payload.get('model') or DEFAULT_MODEL).strip()
-    base_url = str(payload.get('base_url') or DEFAULT_BASE_URL).strip()
-    if not model:
-        raise ValueError(f'model profile {profile_id} is missing model')
-    if not base_url:
-        raise ValueError(f'model profile {profile_id} is missing base_url')
+    model = str(payload.get('model') or '').strip()
+    base_url = str(payload.get('base_url') or '').strip()
     return {
         'id': profile_id,
         'label': label or profile_id,
@@ -1177,6 +1430,8 @@ def normalize_model_profile(payload: Any, *, fallback_id: str) -> dict[str, Any]
         'top_p': parse_optional_float(payload.get('top_p'), default=None),
         'max_completion_tokens': parse_optional_int(payload.get('max_completion_tokens'), default=None),
         'request_timeout_seconds': parse_optional_float(payload.get('request_timeout_seconds'), default=120.0),
+        'request_max_attempts': parse_optional_int(payload.get('request_max_attempts'), default=None),
+        'request_retry_delay_seconds': parse_optional_float(payload.get('request_retry_delay_seconds'), default=None),
         'extra_body': normalize_extra_body(payload.get('extra_body')),
     }
 
@@ -1190,10 +1445,10 @@ def default_model_profiles_payload() -> dict[str, Any]:
                 {
                     'id': 'default',
                     'label': '默认配置',
-                    'model': os.environ.get('MARATHON_MODEL', DEFAULT_MODEL),
-                    'base_url': os.environ.get('MARATHON_BASE_URL', DEFAULT_BASE_URL),
+                    'model': os.environ.get('MARATHON_MODEL', '').strip(),
+                    'base_url': os.environ.get('MARATHON_BASE_URL', '').strip(),
                     'api_key': os.environ.get('MARATHON_API_KEY', ''),
-                    'temperature': 0.7,
+                    'temperature': None,
                     'request_timeout_seconds': 120.0,
                     'extra_body': {},
                 },
@@ -1310,6 +1565,11 @@ def resolve_run_model_config(payload: dict[str, Any]) -> dict[str, Any]:
         'top_p': parse_optional_float(payload.get('top_p'), default=profile.get('top_p')),
         'max_completion_tokens': parse_optional_int(payload.get('max_completion_tokens'), default=profile.get('max_completion_tokens')),
         'request_timeout_seconds': parse_optional_float(payload.get('request_timeout_seconds'), default=profile.get('request_timeout_seconds')),
+        'request_max_attempts': parse_optional_int(payload.get('request_max_attempts'), default=profile.get('request_max_attempts')),
+        'request_retry_delay_seconds': parse_optional_float(
+            payload.get('request_retry_delay_seconds'),
+            default=profile.get('request_retry_delay_seconds'),
+        ),
         'extra_body': profile.get('extra_body') or {},
     }
     if 'extra_body' in payload:
@@ -1325,9 +1585,128 @@ def resolve_run_model_config(payload: dict[str, Any]) -> dict[str, Any]:
     return {'model': model, 'base_url': base_url, 'api_key': api_key, 'model_settings': cleaned, 'profile': profile}
 
 
+def test_model_connectivity(payload: dict[str, Any]) -> dict[str, Any]:
+    resolved = resolve_run_model_config(payload)
+    api_key = resolved['api_key']
+    if not api_key:
+        raise ValueError('missing API key')
+
+    model_settings = dict(resolved['model_settings'])
+    base_url = str(resolved['base_url']).rstrip('/')
+    url = base_url + '/chat/completions'
+    request_body: dict[str, Any] = {
+        'model': resolved['model'],
+        'messages': [
+            {'role': 'system', 'content': 'Reply with a very short plain-text pong.'},
+            {'role': 'user', 'content': 'ping'},
+        ],
+        'max_completion_tokens': min(
+            parse_non_negative_int(model_settings.get('max_completion_tokens'), default=48),
+            48,
+        ),
+    }
+    if model_settings.get('reasoning_effort'):
+        request_body['reasoning_effort'] = model_settings['reasoning_effort']
+    if model_settings.get('temperature') is not None:
+        request_body['temperature'] = model_settings['temperature']
+    if model_settings.get('top_p') is not None:
+        request_body['top_p'] = model_settings['top_p']
+    if model_settings.get('extra_body'):
+        request_body.update(model_settings['extra_body'])
+
+    timeout_seconds = parse_non_negative_float(model_settings.get('request_timeout_seconds'), default=15.0)
+    max_attempts = max(1, parse_non_negative_int(model_settings.get('request_max_attempts'), default=1))
+    retry_delay_seconds = parse_non_negative_float(model_settings.get('request_retry_delay_seconds'), default=1.0)
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(request_body).encode('utf-8'),
+        headers={
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {api_key}',
+        },
+        method='POST',
+    )
+
+    started = time.monotonic()
+    raw = ''
+    transient_error: Exception | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+                raw = response.read().decode('utf-8')
+            break
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode('utf-8', errors='replace')
+            raise RuntimeError(f'model HTTP error {exc.code}: {detail}') from exc
+        except (urllib.error.URLError, TimeoutError, http.client.RemoteDisconnected, http.client.IncompleteRead) as exc:
+            transient_error = exc
+            if attempt >= max_attempts:
+                raise RuntimeError(f'model request failed after {max_attempts} attempts: {exc}') from exc
+            time.sleep(retry_delay_seconds)
+    else:
+        raise RuntimeError(f'model request failed after {max_attempts} attempts: {transient_error}')
+
+    latency_ms = int((time.monotonic() - started) * 1000)
+    response_payload = json.loads(raw or '{}')
+    if not isinstance(response_payload, dict):
+        raise ValueError('model response was not a JSON object')
+    choices = response_payload.get('choices')
+    if not isinstance(choices, list) or not choices:
+        raise ValueError('model response did not include choices')
+    first_choice = choices[0] if isinstance(choices[0], dict) else {}
+    message = first_choice.get('message') if isinstance(first_choice.get('message'), dict) else {}
+    content = str(message.get('content') or '').strip()
+    usage = response_payload.get('usage') if isinstance(response_payload.get('usage'), dict) else {}
+    return {
+        'ok': True,
+        'model': resolved['model'],
+        'base_url': base_url,
+        'latency_ms': latency_ms,
+        'preview': compact_text_preview(content, limit=160) or '模型已响应，但没有返回正文。',
+        'response_model': response_payload.get('model') or resolved['model'],
+        'usage': {
+            'prompt_tokens': usage.get('prompt_tokens'),
+            'completion_tokens': usage.get('completion_tokens'),
+            'total_tokens': usage.get('total_tokens'),
+        },
+    }
+
+
 def run_dir_for(run_id: str) -> Path:
     require_name(run_id, field='run id')
     return RUNS_DIR / run_id
+
+
+def list_invalid_response_artifacts(run_dir: Path) -> list[dict[str, Any]]:
+    rounds_dir = run_dir / 'rounds'
+    if not rounds_dir.exists():
+        return []
+    items: list[dict[str, Any]] = []
+    for path in sorted(rounds_dir.glob('*/response.invalid-*.txt')):
+        round_name = path.parent.name
+        raw_path = path.with_suffix('.raw.json')
+        items.append(
+            {
+                'round': int(round_name) if round_name.isdigit() else round_name,
+                'attempt': path.stem.split('-')[-1],
+                'text': read_text(path, max_chars=MAX_TEXT_PREVIEW),
+                'raw_json_text': read_text(raw_path, max_chars=MAX_TEXT_PREVIEW),
+                'text_path': str(path),
+                'raw_path': str(raw_path),
+            }
+        )
+    return items
+
+
+def latest_round_error_text(run_dir: Path) -> str | None:
+    rounds_dir = run_dir / 'rounds'
+    if not rounds_dir.exists():
+        return None
+    candidates = sorted(rounds_dir.glob('*/error.json'))
+    if not candidates:
+        return None
+    latest = candidates[-1]
+    return read_text(latest, max_chars=MAX_TEXT_PREVIEW)
 
 
 def summarize_run(run_dir: Path) -> dict[str, Any]:
@@ -1359,6 +1738,13 @@ def summarize_run(run_dir: Path) -> dict[str, Any]:
         'mode': host_run.get('mode') or ui_launch.get('mode') or 'task',
         'task_prompt': host_run.get('task_prompt') or ui_launch.get('task_prompt'),
         'sync_interval': host_run.get('sync_interval'),
+        'max_runtime_seconds': status.get('max_runtime_seconds') or host_run.get('max_runtime_seconds') or ui_launch.get('max_runtime_seconds'),
+        'max_total_tokens': status.get('max_total_tokens') or host_run.get('max_total_tokens') or ui_launch.get('max_total_tokens'),
+        'token_usage_prompt': status.get('token_usage_prompt'),
+        'token_usage_completion': status.get('token_usage_completion'),
+        'token_usage_total': status.get('token_usage_total'),
+        'elapsed_seconds': status.get('elapsed_seconds'),
+        'stop_reason': status.get('stop_reason'),
         'launch_returncode': launch.get('returncode'),
         'latest_action_done': latest_action_done,
         'latest_action_next': latest_action_next,
@@ -1370,10 +1756,17 @@ def summarize_run(run_dir: Path) -> dict[str, Any]:
 
 
 def list_runs() -> list[dict[str, Any]]:
-    ensure_dir(RUNS_DIR)
-    dirs = [path for path in RUNS_DIR.iterdir() if path.is_dir()]
-    dirs.sort(key=lambda item: item.stat().st_mtime, reverse=True)
-    return [summarize_run(path) for path in dirs]
+    try:
+        return run_index.list_run_summaries(
+            runs_dir=RUNS_DIR,
+            container_blog_dir=CONTAINER_BLOG_DIR,
+            agent_account_dir=AGENT_ACCOUNT_DIR,
+        )
+    except Exception:
+        ensure_dir(RUNS_DIR)
+        dirs = [path for path in RUNS_DIR.iterdir() if path.is_dir()]
+        dirs.sort(key=lambda item: item.stat().st_mtime, reverse=True)
+        return [summarize_run(path) for path in dirs]
 
 
 def runs_for_container(container_name: str) -> list[dict[str, Any]]:
@@ -1406,36 +1799,68 @@ def container_detail(name: str) -> dict[str, Any]:
         'latest_blog_post': blog['latest_blog_post'],
         'blog_meta': blog['blog_meta'],
         'agent_binding': container_agent_binding_payload(name),
+        'saved_agent_settings': read_container_agent_settings(name),
+        'agent_settings_updated_at': read_container_state_meta(name).get('agent_settings_updated_at'),
+        'settings_backup_summary': container_settings_backup_summary(name),
     }
 
 def run_detail(run_id: str) -> dict[str, Any]:
     run_dir = run_dir_for(run_id)
-    summary = summarize_run(run_dir)
-    latest_state_before = read_json(run_dir / 'latest_state_before.json')
-    latest_state_after = read_json(run_dir / 'latest_state_after.json')
-    recent_rounds = read_recent_rounds(run_dir / 'events.jsonl')
+    try:
+        indexed = run_index.get_run_payload(
+            run_id,
+            runs_dir=RUNS_DIR,
+            container_blog_dir=CONTAINER_BLOG_DIR,
+            agent_account_dir=AGENT_ACCOUNT_DIR,
+        )
+    except Exception:
+        indexed = {}
+
+    summary = indexed.get('summary') if isinstance(indexed.get('summary'), dict) else summarize_run(run_dir)
+    latest_state_before = (
+        indexed.get('latest_state_before')
+        if isinstance(indexed.get('latest_state_before'), dict)
+        else read_json(run_dir / 'latest_state_before.json')
+    )
+    latest_state_after = (
+        indexed.get('latest_state_after')
+        if isinstance(indexed.get('latest_state_after'), dict)
+        else read_json(run_dir / 'latest_state_after.json')
+    )
+    recent_rounds = indexed.get('recent_rounds') if isinstance(indexed.get('recent_rounds'), list) else read_recent_rounds(run_dir / 'events.jsonl')
     self_modification = summarize_run_self_modification(run_dir, latest_state_before, latest_state_after)
-    latest_round = normalize_blog_post(read_json(run_dir / 'latest_round.json'), container=summary.get('container'), run_id=run_id)
+    latest_round = (
+        indexed.get('latest_round')
+        if isinstance(indexed.get('latest_round'), dict)
+        else normalize_blog_post(read_json(run_dir / 'latest_round.json'), container=summary.get('container'), run_id=run_id)
+    )
     tool_source = None
     for candidate in (latest_state_after, latest_state_before):
         if isinstance(candidate, dict) and isinstance(candidate.get('tool_source'), str):
             tool_source = candidate.get('tool_source')
             break
     container_name = summary.get('container')
+    invalid_response_artifacts = (
+        indexed.get('invalid_response_artifacts')
+        if isinstance(indexed.get('invalid_response_artifacts'), list)
+        else list_invalid_response_artifacts(run_dir)
+    )
     return {
         'summary': summary,
-        'host_run': read_json(run_dir / 'host_run.json'),
-        'status': read_json(run_dir / 'status.json'),
-        'launch': read_json(run_dir / 'launch.json'),
-        'ui_launch': read_json(run_dir / 'ui_launch.json'),
-        'latest_action': read_json(run_dir / 'latest_action.json'),
-        'latest_tool_result': read_json(run_dir / 'latest_tool_result.json'),
+        'host_run': indexed.get('host_run') if isinstance(indexed.get('host_run'), dict) else read_json(run_dir / 'host_run.json'),
+        'status': indexed.get('status') if isinstance(indexed.get('status'), dict) else read_json(run_dir / 'status.json'),
+        'launch': indexed.get('launch') if isinstance(indexed.get('launch'), dict) else read_json(run_dir / 'launch.json'),
+        'ui_launch': indexed.get('ui_launch') if isinstance(indexed.get('ui_launch'), dict) else read_json(run_dir / 'ui_launch.json'),
+        'latest_action': indexed.get('latest_action') if isinstance(indexed.get('latest_action'), dict) else read_json(run_dir / 'latest_action.json'),
+        'latest_tool_result': indexed.get('latest_tool_result') if isinstance(indexed.get('latest_tool_result'), dict) else read_json(run_dir / 'latest_tool_result.json'),
         'latest_state_before': latest_state_before,
         'latest_state_after': latest_state_after,
         'latest_round': latest_round,
-        'latest_response_text': read_text(run_dir / 'latest_response.txt'),
+        'latest_response_text': indexed.get('latest_response_text') if isinstance(indexed.get('latest_response_text'), str) else read_text(run_dir / 'latest_response.txt'),
+        'latest_round_error_text': indexed.get('latest_round_error_text') if isinstance(indexed.get('latest_round_error_text'), str) else latest_round_error_text(run_dir),
+        'invalid_response_artifacts': invalid_response_artifacts,
         'recent_rounds': recent_rounds,
-        'blog_posts': read_blog_posts(run_dir / 'blog.jsonl', run_id=run_id, container=summary.get('container')),
+        'blog_posts': indexed.get('blog_posts') if isinstance(indexed.get('blog_posts'), list) else read_blog_posts(run_dir / 'blog.jsonl', run_id=run_id, container=summary.get('container')),
         'observation': derive_run_observation(
             summary,
             latest_state_before,
@@ -1443,11 +1868,11 @@ def run_detail(run_id: str) -> dict[str, Any]:
             recent_rounds,
             self_modification,
         ),
-        'events_tail': read_text(run_dir / 'events.jsonl'),
-        'live_stdout_tail': read_text(run_dir / 'live.stdout'),
-        'live_stderr_tail': read_text(run_dir / 'live.stderr'),
-        'supervisor_stdout_tail': read_text(run_dir / 'supervisor.stdout'),
-        'supervisor_stderr_tail': read_text(run_dir / 'supervisor.stderr'),
+        'events_tail': indexed.get('events_tail') if isinstance(indexed.get('events_tail'), str) else read_text(run_dir / 'events.jsonl'),
+        'live_stdout_tail': indexed.get('live_stdout_tail') if isinstance(indexed.get('live_stdout_tail'), str) else read_text(run_dir / 'live.stdout'),
+        'live_stderr_tail': indexed.get('live_stderr_tail') if isinstance(indexed.get('live_stderr_tail'), str) else read_text(run_dir / 'live.stderr'),
+        'supervisor_stdout_tail': indexed.get('supervisor_stdout_tail') if isinstance(indexed.get('supervisor_stdout_tail'), str) else read_text(run_dir / 'supervisor.stdout'),
+        'supervisor_stderr_tail': indexed.get('supervisor_stderr_tail') if isinstance(indexed.get('supervisor_stderr_tail'), str) else read_text(run_dir / 'supervisor.stderr'),
         'tool_source': tool_source,
         'container_runtime': read_container_runtime(container_name) if isinstance(container_name, str) else None,
     }
@@ -1536,6 +1961,8 @@ def launch_supervisor(
     model_settings: dict[str, Any],
     max_rounds: int,
     sleep_seconds: float,
+    max_runtime_seconds: int | None,
+    max_total_tokens: int | None,
     agent_handle: str | None = None,
     mode: str = 'task',
 ) -> dict[str, Any]:
@@ -1567,6 +1994,10 @@ def launch_supervisor(
         '--max-rounds', str(max_rounds),
         '--sleep-seconds', str(sleep_seconds),
     ]
+    if max_runtime_seconds is not None:
+        command.extend(['--max-runtime-seconds', str(max_runtime_seconds)])
+    if max_total_tokens is not None:
+        command.extend(['--max-total-tokens', str(max_total_tokens)])
     stdout_path = run_dir / 'supervisor.stdout'
     stderr_path = run_dir / 'supervisor.stderr'
     with stdout_path.open('a', encoding='utf-8') as stdout_handle, stderr_path.open('a', encoding='utf-8') as stderr_handle:
@@ -1591,6 +2022,11 @@ def launch_supervisor(
             'started_at': time.strftime('%Y-%m-%dT%H:%M:%S%z'),
             'supervisor_pid': process.pid,
             'model_settings': model_settings,
+            'api_key_fingerprint': api_key_fingerprint(api_key),
+            'max_rounds': max_rounds,
+            'sleep_seconds': sleep_seconds,
+            'max_runtime_seconds': max_runtime_seconds,
+            'max_total_tokens': max_total_tokens,
             'agent_handle': agent_handle,
         },
     )
@@ -1607,6 +2043,8 @@ def launch_agent_for_container(
     model_settings: dict[str, Any],
     max_rounds: int,
     sleep_seconds: float,
+    max_runtime_seconds: int | None,
+    max_total_tokens: int | None,
     agent_handle: str | None = None,
     run_id: str | None = None,
     mode: str = 'task',
@@ -1647,6 +2085,8 @@ def launch_agent_for_container(
         model_settings=model_settings,
         max_rounds=max_rounds,
         sleep_seconds=sleep_seconds,
+        max_runtime_seconds=max_runtime_seconds,
+        max_total_tokens=max_total_tokens,
         agent_handle=resolved_agent_handle,
         mode=mode,
     )
@@ -1662,6 +2102,94 @@ def stop_agent_for_container(container: str) -> dict[str, Any]:
     return {'ok': True, 'container': container, 'active_run': active, 'stop': stopped}
 
 
+def retry_payload_from_run_detail(detail: dict[str, Any]) -> dict[str, Any]:
+    summary = detail.get('summary') if isinstance(detail.get('summary'), dict) else {}
+    host_run = detail.get('host_run') if isinstance(detail.get('host_run'), dict) else {}
+    ui_launch = detail.get('ui_launch') if isinstance(detail.get('ui_launch'), dict) else {}
+    ui_settings = ui_launch.get('model_settings') if isinstance(ui_launch.get('model_settings'), dict) else {}
+    payload: dict[str, Any] = {
+        'mode': first_text(ui_launch.get('mode'), host_run.get('mode'), summary.get('mode')) or 'task',
+        'task_prompt': first_text(ui_launch.get('task_prompt'), host_run.get('task_prompt'), summary.get('task_prompt')) or DEFAULT_TASK_PROMPT,
+        'model': first_text(ui_launch.get('model'), host_run.get('model'), summary.get('model')),
+        'base_url': first_text(ui_launch.get('base_url'), host_run.get('base_url'), summary.get('base_url')),
+        'profile_id': first_text(ui_settings.get('profile_id')),
+        'reasoning_effort': first_text(ui_settings.get('reasoning_effort')),
+        'temperature': first_non_null(ui_settings.get('temperature')),
+        'top_p': first_non_null(ui_settings.get('top_p')),
+        'max_completion_tokens': first_non_null(ui_settings.get('max_completion_tokens')),
+        'request_timeout_seconds': first_non_null(ui_settings.get('request_timeout_seconds')),
+        'request_max_attempts': first_non_null(ui_settings.get('request_max_attempts')),
+        'request_retry_delay_seconds': first_non_null(ui_settings.get('request_retry_delay_seconds')),
+        'extra_body': ui_settings.get('extra_body') if isinstance(ui_settings.get('extra_body'), dict) else {},
+        'max_rounds': first_non_null(ui_launch.get('max_rounds'), host_run.get('max_rounds'), 0),
+        'sleep_seconds': first_non_null(ui_launch.get('sleep_seconds'), host_run.get('sleep_seconds'), 1.0),
+        'max_runtime_seconds': first_non_null(ui_launch.get('max_runtime_seconds'), host_run.get('max_runtime_seconds')),
+        'max_total_tokens': first_non_null(ui_launch.get('max_total_tokens'), host_run.get('max_total_tokens')),
+        'api_key_fingerprint': first_text(ui_launch.get('api_key_fingerprint'), host_run.get('api_key_fingerprint')),
+    }
+    resolved_agent_handle = first_text(ui_launch.get('agent_handle'), summary.get('agent_handle'))
+    if resolved_agent_handle is not None:
+        payload['agent_handle'] = resolved_agent_handle
+    return payload
+
+
+def retry_latest_run_for_container(container: str) -> dict[str, Any]:
+    require_name(container, field='container name')
+    active = active_run_summary_for_container(container)
+    if active is not None:
+        raise ValueError(f'container already has an active AI session: {container}')
+    latest = latest_run_summary_for_container(container)
+    if latest is None:
+        raise ValueError(f'container has no previous run to retry: {container}')
+
+    detail = run_detail(str(latest['run_id']))
+    payload = retry_payload_from_run_detail(detail)
+    resolved = apply_run_mode_defaults(payload, resolve_run_model_config(payload))
+    expected_fingerprint = first_text(payload.get('api_key_fingerprint'))
+    current_fingerprint = api_key_fingerprint(resolved.get('api_key'))
+    if expected_fingerprint and current_fingerprint != expected_fingerprint:
+        raise ValueError(
+            'current API key does not match the original run configuration; update the model config explicitly before retrying'
+        )
+    agent_handle = first_text(payload.get('agent_handle'))
+    launched = launch_agent_for_container(
+        container,
+        model=resolved['model'],
+        base_url=resolved['base_url'],
+        api_key=resolved['api_key'],
+        task_prompt=resolved['task_prompt'],
+        model_settings=resolved['model_settings'],
+        max_rounds=resolved['max_rounds'],
+        sleep_seconds=resolved['sleep_seconds'],
+        max_runtime_seconds=resolved['max_runtime_seconds'],
+        max_total_tokens=resolved['max_total_tokens'],
+        agent_handle=agent_handle,
+        mode=resolved['mode'],
+    )
+    return {
+        'ok': bool(launched.get('ok')),
+        'container': container,
+        'retried_from_run_id': latest['run_id'],
+        'retry_payload': payload,
+        'resolved_mode': resolved['mode'],
+        'launch': launched.get('launch'),
+        'prepared': launched.get('prepared'),
+        'already_running': launched.get('already_running', False),
+        'error': launched.get('error'),
+        'step': launched.get('step'),
+    }
+
+
+def restart_container(name: str) -> dict[str, Any]:
+    require_name(name, field='container name')
+    stopped = stop_container(name)
+    if not stopped.get('ok'):
+        return {'ok': False, 'container': name, 'stop': stopped}
+    time.sleep(1)
+    started = start_container(name)
+    return {'ok': bool(started.get('ok')), 'container': name, 'stop': stopped, 'start': started}
+
+
 def start_run(
     base_name: str,
     *,
@@ -1674,6 +2202,8 @@ def start_run(
     model_settings: dict[str, Any],
     max_rounds: int,
     sleep_seconds: float,
+    max_runtime_seconds: int | None,
+    max_total_tokens: int | None,
     agent_handle: str | None = None,
     agent_handle_explicit: bool = False,
     mode: str = 'task',
@@ -1699,6 +2229,8 @@ def start_run(
             model_settings=model_settings,
             max_rounds=max_rounds,
             sleep_seconds=sleep_seconds,
+            max_runtime_seconds=max_runtime_seconds,
+            max_total_tokens=max_total_tokens,
             agent_handle=resolved_agent_handle,
             mode=mode,
         )
@@ -1866,6 +2398,25 @@ class AppHandler(BaseHTTPRequestHandler):
             if parsed.path == '/api/model-profiles':
                 self.send_json({'ok': True, **write_model_profiles_payload(payload)})
                 return
+            if parsed.path == '/api/model-connectivity-test':
+                self.send_json(test_model_connectivity(payload))
+                return
+            if parsed.path == '/api/ingest/runs':
+                require_ingest_token(self.headers, payload)
+                self.send_json(ingest_api.write_run_payload(payload, runs_dir=RUNS_DIR))
+                return
+            if parsed.path == '/api/ingest/events':
+                require_ingest_token(self.headers, payload)
+                self.send_json(ingest_api.append_events_payload(payload, runs_dir=RUNS_DIR))
+                return
+            if parsed.path == '/api/ingest/round-posts':
+                require_ingest_token(self.headers, payload)
+                self.send_json(ingest_api.append_round_posts_payload(payload, runs_dir=RUNS_DIR))
+                return
+            if parsed.path == '/api/ingest/artifacts':
+                require_ingest_token(self.headers, payload)
+                self.send_json(ingest_api.write_artifacts_payload(payload, runs_dir=RUNS_DIR))
+                return
             if parsed.path == '/api/agent-accounts/register':
                 self.send_json(register_agent_account(payload), status=HTTPStatus.CREATED)
                 return
@@ -1886,6 +2437,10 @@ class AppHandler(BaseHTTPRequestHandler):
                     }
                 )
                 return
+            if parsed.path.startswith('/api/containers/') and parsed.path.endswith('/settings'):
+                name = require_name(parsed.path.split('/')[-2], field='container name')
+                self.send_json(write_container_agent_settings(name, payload))
+                return
             if parsed.path == '/api/base-containers':
                 name = require_name(str(payload.get('name', '')).strip(), field='container name')
                 disable_network = bool(payload.get('disable_network', False))
@@ -1904,13 +2459,18 @@ class AppHandler(BaseHTTPRequestHandler):
                 name = require_name(parsed.path.split('/')[-2], field='container name')
                 self.send_json(stop_container(name))
                 return
+            if parsed.path.startswith('/api/containers/') and parsed.path.endswith('/restart'):
+                name = require_name(parsed.path.split('/')[-2], field='container name')
+                self.send_json(restart_container(name))
+                return
             if parsed.path.startswith('/api/containers/') and parsed.path.endswith('/destroy'):
                 name = require_name(parsed.path.split('/')[-2], field='container name')
                 self.send_json(destroy_container(name))
                 return
             if parsed.path.startswith('/api/containers/') and parsed.path.endswith('/launch-agent'):
                 name = require_name(parsed.path.split('/')[-2], field='container name')
-                resolved = apply_run_mode_defaults(payload, resolve_run_model_config(payload))
+                merged_payload = merge_container_agent_settings(name, payload)
+                resolved = apply_run_mode_defaults(merged_payload, resolve_run_model_config(merged_payload))
                 api_key = resolved['api_key']
                 self.send_json(launch_agent_for_container(
                     name,
@@ -1921,6 +2481,8 @@ class AppHandler(BaseHTTPRequestHandler):
                     model_settings=resolved['model_settings'],
                     max_rounds=resolved['max_rounds'],
                     sleep_seconds=resolved['sleep_seconds'],
+                    max_runtime_seconds=resolved['max_runtime_seconds'],
+                    max_total_tokens=resolved['max_total_tokens'],
                     agent_handle=first_text(payload.get('agent_handle')),
                     mode=resolved['mode'],
                 ))
@@ -1929,6 +2491,10 @@ class AppHandler(BaseHTTPRequestHandler):
                 name = require_name(parsed.path.split('/')[-2], field='container name')
                 self.send_json(stop_agent_for_container(name))
                 return
+            if parsed.path.startswith('/api/containers/') and parsed.path.endswith('/retry-agent'):
+                name = require_name(parsed.path.split('/')[-2], field='container name')
+                self.send_json(retry_latest_run_for_container(name))
+                return
             if parsed.path == '/api/runs/start':
                 base_name = require_name(str(payload.get('base_name', '')).strip(), field='base container name')
                 now = time.strftime('%Y%m%d-%H%M%S')
@@ -1936,7 +2502,8 @@ class AppHandler(BaseHTTPRequestHandler):
                 run_id = str(payload.get('run_id') or f'{container_name}-{now}').strip()
                 require_name(run_id, field='run id')
                 require_name(container_name, field='container name')
-                resolved = apply_run_mode_defaults(payload, resolve_run_model_config(payload))
+                merged_payload = merge_container_agent_settings(base_name, payload)
+                resolved = apply_run_mode_defaults(merged_payload, resolve_run_model_config(merged_payload))
                 api_key = resolved['api_key']
                 agent_handle_explicit = 'agent_handle' in payload
                 raw_agent_handle = payload.get('agent_handle') if agent_handle_explicit else None
@@ -1951,6 +2518,8 @@ class AppHandler(BaseHTTPRequestHandler):
                     model_settings=resolved['model_settings'],
                     max_rounds=resolved['max_rounds'],
                     sleep_seconds=resolved['sleep_seconds'],
+                    max_runtime_seconds=resolved['max_runtime_seconds'],
+                    max_total_tokens=resolved['max_total_tokens'],
                     agent_handle=raw_agent_handle if isinstance(raw_agent_handle, str) else None,
                     agent_handle_explicit=agent_handle_explicit,
                     mode=resolved['mode'],

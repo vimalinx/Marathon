@@ -9,6 +9,11 @@ from unittest import mock
 import container.agent_loop as agent_loop
 
 
+class DefaultConfigTests(unittest.TestCase):
+    def test_default_base_url_is_blank_for_public_repo(self) -> None:
+        self.assertEqual(agent_loop.DEFAULT_BASE_URL, "")
+
+
 class BuildMessagesTests(unittest.TestCase):
     def test_build_messages_includes_task_prompt_and_feedback(self) -> None:
         messages = agent_loop.build_messages(
@@ -181,6 +186,94 @@ class CallModelTests(unittest.TestCase):
         self.assertEqual(payload["choices"][0]["message"]["content"], "{\"cmd\":\"pwd\"}")
         self.assertEqual(urlopen.call_count, 2)
         sleep.assert_called_once()
+
+
+class InvalidModelResponseRetryTests(unittest.TestCase):
+    def test_request_validated_action_retries_once_after_invalid_json(self) -> None:
+        responses = [
+            (
+                '{"done":"bad","next":"bad","thought":"bad","argv":["bash","-lc","printf \\"oops\\qad\\""],"timeout":10}',
+                {"usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}},
+            ),
+            (
+                '{"done":"ok","next":"continue","thought":"valid json now","argv":["bash","-lc","pwd"],"timeout":10}',
+                {"usage": {"prompt_tokens": 11, "completion_tokens": 6, "total_tokens": 17}},
+            ),
+        ]
+
+        with mock.patch.object(agent_loop, "call_model", side_effect=responses) as call_model:
+            result = agent_loop.request_validated_action_with_retry(
+                "https://example.com/v1",
+                "test-key",
+                "gpt-5.4",
+                [{"role": "user", "content": "hi"}],
+                agent_loop.load_model_settings(""),
+                invalid_response_retries=1,
+            )
+
+        self.assertEqual(call_model.call_count, 2)
+        self.assertEqual(len(result["invalid_attempts"]), 1)
+        self.assertEqual(result["action"]["done"], "ok")
+        self.assertEqual(result["round_usage"]["total_tokens"], 32)
+
+    def test_request_validated_action_raises_after_second_invalid_response(self) -> None:
+        responses = [
+            (
+                '{"done":"bad","next":"bad","thought":"bad","argv":["bash","-lc","printf \\"oops\\qad\\""],"timeout":10}',
+                {"usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}},
+            ),
+            (
+                '{"done":"bad-again","next":"bad","thought":"bad","argv":["bash","-lc","printf \\"oops\\qad2\\""],"timeout":10}',
+                {"usage": {"prompt_tokens": 11, "completion_tokens": 6, "total_tokens": 17}},
+            ),
+        ]
+
+        with mock.patch.object(agent_loop, "call_model", side_effect=responses) as call_model:
+            with self.assertRaises(agent_loop.InvalidModelResponseError) as raised:
+                agent_loop.request_validated_action_with_retry(
+                    "https://example.com/v1",
+                    "test-key",
+                    "gpt-5.4",
+                    [{"role": "user", "content": "hi"}],
+                    agent_loop.load_model_settings(""),
+                    invalid_response_retries=1,
+                )
+
+        self.assertEqual(call_model.call_count, 2)
+        self.assertEqual(len(raised.exception.attempts), 2)
+
+
+class TokenBudgetTests(unittest.TestCase):
+    def test_normalize_and_accumulate_token_usage(self) -> None:
+        usage = agent_loop.normalize_token_usage(
+            {"usage": {"prompt_tokens": 120, "completion_tokens": 45, "total_tokens": 165}}
+        )
+        combined = agent_loop.accumulate_token_usage(
+            {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            {"usage": usage},
+        )
+
+        self.assertEqual(usage["total_tokens"], 165)
+        self.assertEqual(combined["prompt_tokens"], 130)
+        self.assertEqual(combined["completion_tokens"], 50)
+        self.assertEqual(combined["total_tokens"], 180)
+
+    def test_stop_reason_for_limits_prefers_runtime_then_token_budget(self) -> None:
+        runtime_reason = agent_loop.stop_reason_for_limits(
+            elapsed_seconds=601,
+            token_usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 100},
+            max_runtime_seconds=600,
+            max_total_tokens=1000,
+        )
+        token_reason = agent_loop.stop_reason_for_limits(
+            elapsed_seconds=120,
+            token_usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 1001},
+            max_runtime_seconds=600,
+            max_total_tokens=1000,
+        )
+
+        self.assertEqual(runtime_reason, "max_runtime_seconds")
+        self.assertEqual(token_reason, "max_total_tokens")
 
 
 if __name__ == "__main__":

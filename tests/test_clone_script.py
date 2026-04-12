@@ -13,6 +13,11 @@ class CloneScriptPrivilegeTests(unittest.TestCase):
         self.assertIn('render-netplan', script)
         self.assertIn('/etc/netplan/10-lxc.yaml', script)
 
+    def test_clone_script_preserves_agent_settings_metadata(self) -> None:
+        script = Path("scripts/clone_container.sh").read_text(encoding="utf-8")
+        self.assertIn("agent_settings", script)
+        self.assertIn("agent_settings_updated_at", script)
+
 
 class StartRunCleanupTests(unittest.TestCase):
     def test_start_run_cleanup_removes_container_state_meta(self) -> None:
@@ -26,6 +31,11 @@ class StartRunCleanupTests(unittest.TestCase):
     def test_start_run_script_exports_project_root_on_pythonpath(self) -> None:
         script = Path("scripts/start_run.sh").read_text(encoding="utf-8")
         self.assertIn('export PYTHONPATH="${ROOT_DIR}${PYTHONPATH:+:${PYTHONPATH}}"', script)
+
+    def test_start_run_script_requires_explicit_model_provider_settings(self) -> None:
+        script = Path("scripts/start_run.sh").read_text(encoding="utf-8")
+        self.assertIn('missing MARATHON_BASE_URL', script)
+        self.assertIn('missing MARATHON_API_KEY', script)
 
 
 if __name__ == "__main__":

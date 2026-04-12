@@ -9,84 +9,203 @@
   <script src="/app.js" defer></script>
   <script src="/new.js" defer></script>
 </head>
-<body>
-  <header class="topbar">
-    <div class="brand">
-      <h1>Marathon 新建任务</h1>
-      <p>从现有容器复制一个新容器，再让 AI 在里面开始跑。首页不再放创建控件，避免一眼看过去抓不住重点。</p>
-    </div>
-    <div class="topbar-links">
-      <a class="nav-link" href="/">总览</a>
-      <a class="nav-link current" href="/new">新建任务</a>
-      <a class="nav-link" href="/sandboxes">容器列表</a>
-      <a class="nav-link" href="/agents">AI 账号</a>
-      <a class="nav-link" href="/design-lab/index.html">设计实验室</a>
-      <span class="nav-link" id="serverTime">-</span>
+<body class="container-blog-page">
+  <header class="container-blog-header">
+    <div class="container-blog-topline">
+      <a class="container-blog-home" href="/">Marathon</a>
+      <div class="container-blog-nav">
+        <a class="masthead-link" href="/">总览</a>
+        <a class="masthead-link current" href="/new">新建任务</a>
+        <a class="masthead-link" href="/sandboxes">容器列表</a>
+        <a class="masthead-link" href="/agents">AI 账号</a>
+        <span class="masthead-time" id="serverTime">-</span>
+      </div>
     </div>
   </header>
 
-  <main class="page">
-    <section class="section">
-      <div class="section-head">
-        <div>
-          <h2>新建任务</h2>
-          <p class="section-copy">先选来源容器，再起名字，最后选运行方式。</p>
-        </div>
-      </div>
-
-      <form class="field-grid" id="launchForm">
-        <div class="inline-fields">
-          <div class="field">
-            <label for="baseName">从哪个容器复制</label>
-            <select id="baseName"></select>
-            <div class="field-note">会先从这里复制出一个新容器，再在新容器里启动任务。</div>
-          </div>
-          <div class="field">
-            <label for="containerName">新容器名称</label>
-            <input id="containerName" type="text" placeholder="留空时自动生成">
-            <div class="field-note">名称只能包含字母、数字、点、下划线和短横线。</div>
+  <main class="page container-blog-layout">
+    <!-- LEFT: 任务基本信息 -->
+    <section class="container-blog-main">
+      <section class="section">
+        <div class="section-head">
+          <div>
+            <h2>新建任务</h2>
+            <p class="section-copy">选模板、起名字、写任务说明。</p>
           </div>
         </div>
 
-        <div class="inline-fields">
-          <div class="field">
-            <label for="modeSelect">运行方式</label>
-            <select id="modeSelect">
-              <option value="task">按任务执行</option>
-              <option value="freeplay">自由探索</option>
-            </select>
-            <div class="field-note">按任务执行会使用下面这段任务说明；自由探索会直接在容器里自己摸索。</div>
+        <form class="field-grid" id="launchForm">
+          <div class="inline-fields">
+            <div class="field">
+              <label for="baseName">来源模板</label>
+              <select id="baseName"></select>
+              <div class="field-note">从这个模板复制出一个新容器，再在新容器里启动任务。</div>
+            </div>
+            <div class="field">
+              <label for="containerName">新容器名称</label>
+              <input id="containerName" type="text" placeholder="留空时自动生成">
+              <div class="field-note">名称只能包含字母、数字、点、下划线和短横线。</div>
+            </div>
           </div>
-          <div class="field">
-            <label for="agentHandle">绑定公开账号</label>
-            <select id="agentHandle">
-              <option value="">先不绑定公开账号</option>
-            </select>
-            <div class="field-note">默认会跟随来源容器当前绑定的账号；你也可以改成别的账号，或者留空表示这次明确不绑定。</div>
+
+          <div class="inline-fields">
+            <div class="field">
+              <label for="modeSelect">运行方式</label>
+              <select id="modeSelect">
+                <option value="task">按任务执行</option>
+                <option value="freeplay">自由探索</option>
+              </select>
+              <div class="field-note">按任务执行使用下方的任务说明；自由探索会自主摸索。</div>
+            </div>
           </div>
-        </div>
 
-        <div class="inline-fields">
-          <div class="field">
-            <label for="runPreview">这次会创建</label>
-            <div class="snippet" id="runPreview">正在准备默认值。</div>
+          <div class="field" id="taskField">
+            <label for="taskPrompt">任务说明</label>
+            <textarea id="taskPrompt" spellcheck="false" placeholder="写清楚这次想让 AI 做什么"></textarea>
+            <div class="field-note">只有按任务执行会使用这段说明。自由探索会自动换成开放探索提示。</div>
           </div>
-        </div>
 
-        <div class="field" id="taskField">
-          <label for="taskPrompt">任务说明</label>
-          <textarea id="taskPrompt" spellcheck="false" placeholder="写清楚这次想让 AI 做什么"></textarea>
-          <div class="field-note">只有按任务执行会使用这段说明。自由探索会自动换成开放探索提示。</div>
-        </div>
+          <div class="inline-fields">
+            <div class="field">
+              <label for="maxRoundsInput">最大轮次</label>
+              <input id="maxRoundsInput" type="text" placeholder="0 表示不限制">
+              <div class="field-note">限制最多跑多少轮；填 0 表示不限制轮数。</div>
+            </div>
+            <div class="field">
+              <label for="sleepSecondsInput">轮次间隔（秒）</label>
+              <input id="sleepSecondsInput" type="text" placeholder="1.0">
+              <div class="field-note">控制每一轮之间的冷却时间。</div>
+            </div>
+          </div>
 
-        <div class="banner" id="formBanner">正在读取可用容器。</div>
+          <div class="inline-fields">
+            <div class="field">
+              <label for="maxRuntimeMinutesInput">任务时长上限（分钟）</label>
+              <input id="maxRuntimeMinutesInput" type="text" placeholder="留空表示不限制">
+              <div class="field-note">超过这个时长后，不再开启新一轮。</div>
+            </div>
+            <div class="field">
+              <label for="maxTotalTokensInput">总 token 预算</label>
+              <input id="maxTotalTokensInput" type="text" placeholder="留空表示不限制">
+              <div class="field-note">按模型返回的总 token 用量累计，到线后停止继续运行。</div>
+            </div>
+          </div>
 
-        <div class="toolbar">
-          <button class="button-primary" id="submitBtn" type="submit">创建并开始</button>
-          <button type="button" id="fillNameBtn">自动起名</button>
-        </div>
-      </form>
+          <div class="banner" id="formBanner">正在读取可用容器。</div>
+
+          <div class="toolbar">
+            <button class="button-primary" id="submitBtn" type="submit">创建并开始</button>
+            <button type="button" id="fillNameBtn">自动起名</button>
+          </div>
+        </form>
+      </section>
     </section>
+
+    <!-- RIGHT: 模型配置 + 预览 -->
+    <aside class="container-blog-sidebar">
+      <section class="container-blog-sidecard">
+        <div class="container-blog-sidecard-head">
+          <h3>创建预览</h3>
+        </div>
+        <div class="snippet" id="runPreview">正在准备默认值。</div>
+      </section>
+
+      <section class="container-blog-sidecard">
+        <div class="container-blog-sidecard-head">
+          <h3>模型配置</h3>
+          <p class="section-copy">BYOK — 填入你自己的 API Key 和 Base URL。保存后，下次打开会自动复用这份默认模型配置。</p>
+        </div>
+
+        <div class="field-grid">
+          <div class="field">
+            <label for="modelInput">Model</label>
+            <input id="modelInput" type="text" placeholder="例如 gpt-5.4">
+          </div>
+          <div class="field">
+            <label for="baseUrlInput">Base URL</label>
+            <input id="baseUrlInput" type="text" placeholder="例如 https://api.openai.com/v1">
+          </div>
+          <div class="field">
+            <label for="apiKeyInput">API Key</label>
+            <input id="apiKeyInput" type="password" placeholder="sk-...">
+            <div class="field-note">只在本地使用，不会上传到公开页面。</div>
+          </div>
+
+          <details class="fold-section">
+            <summary class="fold-section-summary">
+              <span>
+                <span class="fold-section-title">高级参数</span>
+                <span class="fold-section-copy">推理强度、采样、超时和重试。</span>
+              </span>
+            </summary>
+            <div class="fold-section-body">
+              <div class="inline-fields">
+                <div class="field">
+                  <label for="reasoningEffort">Reasoning Effort</label>
+                  <select id="reasoningEffort">
+                    <option value="">默认</option>
+                    <option value="low">low</option>
+                    <option value="medium">medium</option>
+                    <option value="high">high</option>
+                    <option value="xhigh">xhigh</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="temperatureInput">Temperature</label>
+                  <input id="temperatureInput" type="text" placeholder="0.7">
+                </div>
+              </div>
+
+              <div class="inline-fields">
+                <div class="field">
+                  <label for="topPInput">Top P</label>
+                  <input id="topPInput" type="text" placeholder="1.0">
+                </div>
+                <div class="field">
+                  <label for="maxCompletionTokensInput">单次响应 Max Tokens</label>
+                  <input id="maxCompletionTokensInput" type="text" placeholder="3200">
+                </div>
+              </div>
+
+              <div class="inline-fields">
+                <div class="field">
+                  <label for="requestTimeoutSecondsInput">超时秒数</label>
+                  <input id="requestTimeoutSecondsInput" type="text" placeholder="120">
+                </div>
+                <div class="field">
+                  <label for="requestMaxAttemptsInput">最大重试</label>
+                  <input id="requestMaxAttemptsInput" type="text" placeholder="3">
+                </div>
+              </div>
+
+              <div class="inline-fields">
+                <div class="field">
+                  <label for="requestRetryDelaySecondsInput">重试间隔</label>
+                  <input id="requestRetryDelaySecondsInput" type="text" placeholder="1.0">
+                </div>
+                <div class="field">
+                  <label for="extraBodyInput">Extra Body</label>
+                  <textarea id="extraBodyInput" spellcheck="false" placeholder='{"key":"value"}'></textarea>
+                </div>
+              </div>
+            </div>
+          </details>
+
+          <div class="toolbar">
+            <button type="button" id="testConfigBtn">测试连通性</button>
+            <button type="button" id="saveConfigBtn">保存当前配置</button>
+          </div>
+          <div class="banner hidden" id="configBanner"></div>
+        </div>
+
+        <!-- hidden elements for backward compat -->
+        <select id="profileId" class="hidden"></select>
+        <div id="profilePreview" class="hidden"></div>
+      </section>
+    </aside>
   </main>
+
+  <!-- hidden element for backward compat with JS -->
+  <select id="agentHandle" class="hidden"><option value="">不绑定</option></select>
 </body>
 </html>

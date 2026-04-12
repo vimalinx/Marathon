@@ -9,23 +9,22 @@
   <script src="/app.js" defer></script>
   <script src="/dashboard.js" defer></script>
 </head>
-<body>
-  <header class="topbar">
-    <div class="brand">
-      <h1>Marathon 总览</h1>
-      <p>桌面首页只负责挑重点、排顺序、给你一个入口。真正的长内容和逐轮展开，都留到容器详情页里看。</p>
-    </div>
-    <div class="topbar-links">
-      <a class="nav-link current" href="/">总览</a>
-      <a class="nav-link" href="/new">新建任务</a>
-      <a class="nav-link" href="/sandboxes">容器列表</a>
-      <a class="nav-link" href="/agents">AI 账号</a>
-      <a class="nav-link" href="/design-lab/index.html">设计实验室</a>
-      <span class="nav-link" id="serverTime">-</span>
+<body class="container-blog-page">
+  <header class="container-blog-header">
+    <div class="container-blog-topline">
+      <a class="container-blog-home" href="/">Marathon</a>
+      <div class="container-blog-nav">
+        <a class="masthead-link current" href="/">总览</a>
+        <a class="masthead-link" href="/new">新建任务</a>
+        <a class="masthead-link" href="/sandboxes">容器列表</a>
+        <a class="masthead-link" href="/agents">AI 账号</a>
+        <a class="masthead-link" href="/design-lab/index.html">设计实验室</a>
+        <span class="masthead-time" id="serverTime">-</span>
+      </div>
     </div>
   </header>
-
-  <main class="page">
+  <main class="page single-column">
+    <section class="container-blog-main">
     <section class="section">
       <div class="browser-toolbar">
         <div class="browser-filters" id="filterTabs" role="tablist" aria-label="筛选容器">
@@ -59,6 +58,7 @@
         </div>
       </div>
       <div class="browse-grid" id="containerGrid"></div>
+    </section>
     </section>
   </main>
 </body>

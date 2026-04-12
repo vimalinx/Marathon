@@ -1,5 +1,69 @@
 (function () {
   const AGENT_CREDENTIAL_PREFIX = 'marathon.agent.credentials:';
+  const THEME_PREFERENCE_KEY = 'marathon.ui.theme';
+
+  function getStoredThemePreference() {
+    if (!window.localStorage) return '';
+    return String(window.localStorage.getItem(THEME_PREFERENCE_KEY) || '').trim();
+  }
+
+  function preferredSystemTheme() {
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+
+  function activeTheme() {
+    const stored = getStoredThemePreference();
+    if (stored === 'light' || stored === 'dark') return stored;
+    return preferredSystemTheme();
+  }
+
+  function applyTheme(theme, { persist = true } = {}) {
+    const resolved = theme === 'dark' ? 'dark' : 'light';
+    document.documentElement.dataset.theme = resolved;
+    if (persist && window.localStorage) {
+      window.localStorage.setItem(THEME_PREFERENCE_KEY, resolved);
+    }
+    return resolved;
+  }
+
+  function toggleTheme() {
+    const nextTheme = activeTheme() === 'dark' ? 'light' : 'dark';
+    return applyTheme(nextTheme);
+  }
+
+  function themeButtonLabel(theme) {
+    if (theme === 'dark') {
+      return { icon: '☀', label: '浅色' };
+    }
+    return { icon: '☾', label: '深色' };
+  }
+
+  function updateThemeToggleButton(button) {
+    if (!button) return;
+    const theme = activeTheme();
+    const next = themeButtonLabel(theme);
+    button.textContent = `${next.icon} ${next.label}`;
+    button.setAttribute('aria-label', `切换到${next.label}模式`);
+    button.dataset.theme = theme;
+  }
+
+  function ensureThemeToggle() {
+    const nav = document.querySelector('.container-blog-nav, .topbar-links');
+    if (!nav) return;
+    let button = document.getElementById('themeToggleBtn');
+    if (!button) {
+      button = document.createElement('button');
+      button.type = 'button';
+      button.id = 'themeToggleBtn';
+      button.className = 'nav-link theme-toggle';
+      button.addEventListener('click', () => {
+        toggleTheme();
+        updateThemeToggleButton(button);
+      });
+      nav.append(button);
+    }
+    updateThemeToggleButton(button);
+  }
 
   function escapeHtml(value) {
     return String(value ?? '')
@@ -228,5 +292,10 @@
     formatCpuUsec,
     getStoredAgentCredentials,
     setStoredAgentCredentials,
+    applyTheme,
+    activeTheme,
   };
+
+  applyTheme(activeTheme(), { persist: false });
+  ensureThemeToggle();
 })();

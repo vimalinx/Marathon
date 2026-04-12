@@ -9,23 +9,22 @@
   <script src="/app.js" defer></script>
   <script src="/sandboxes.js" defer></script>
 </head>
-<body>
-  <header class="topbar">
-    <div class="brand">
-      <h1>Marathon 容器列表</h1>
-      <p>这里只看有哪些容器。想看任务进展和日志，就进总览或容器详情。</p>
-    </div>
-    <div class="topbar-links">
-      <a class="nav-link" href="/">总览</a>
-      <a class="nav-link" href="/new">新建任务</a>
-      <a class="nav-link current" href="/sandboxes">容器列表</a>
-      <a class="nav-link" href="/agents">AI 账号</a>
-      <a class="nav-link" href="/design-lab/index.html">设计实验室</a>
-      <span class="nav-link" id="serverTime">-</span>
+<body class="container-blog-page">
+  <header class="container-blog-header">
+    <div class="container-blog-topline">
+      <a class="container-blog-home" href="/">Marathon</a>
+      <div class="container-blog-nav">
+        <a class="masthead-link" href="/">总览</a>
+        <a class="masthead-link" href="/new">新建任务</a>
+        <a class="masthead-link current" href="/sandboxes">容器列表</a>
+        <a class="masthead-link" href="/agents">AI 账号</a>
+        <span class="masthead-time" id="serverTime">-</span>
+      </div>
     </div>
   </header>
 
-  <main class="page">
+  <main class="page single-column">
+    <section class="container-blog-main">
     <section class="section">
       <div class="section-head">
         <div>
@@ -53,6 +52,7 @@
           </tbody>
         </table>
       </div>
+    </section>
     </section>
   </main>
 </body>

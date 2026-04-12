@@ -15,7 +15,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-DEFAULT_BASE_URL = "http://49.235.88.239:3000/v1"
+DEFAULT_BASE_URL = ""
 DEFAULT_MODEL = "gpt-5.4"
 DEFAULT_TASK_PROMPT = (
     "Inspect the sandbox, identify the most useful next step, "
@@ -34,6 +34,7 @@ DEFAULT_MODEL_SETTINGS = {
 }
 MAX_FEEDBACK_TEXT_CHARS = 2000
 ACTION_TEXT_FIELDS = ("done", "next", "thought")
+INVALID_MODEL_RESPONSE_RETRIES = 3
 
 
 def resolve_log_root() -> Path:
@@ -318,6 +319,126 @@ def call_model(base_url: str, api_key: str, model: str, messages: list[dict[str,
     return content, payload
 
 
+class InvalidModelResponseError(ValueError):
+    def __init__(self, message: str, *, attempts: list[dict[str, object]]) -> None:
+        super().__init__(message)
+        self.attempts = attempts
+
+
+def usage_int(value: object) -> int:
+    try:
+        parsed = int(str(value))
+    except (TypeError, ValueError):
+        return 0
+    return parsed if parsed > 0 else 0
+
+
+def normalize_token_usage(payload: dict[str, object] | None) -> dict[str, int]:
+    usage = payload.get("usage") if isinstance(payload, dict) else None
+    if not isinstance(usage, dict):
+        return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    return {
+        "prompt_tokens": usage_int(usage.get("prompt_tokens")),
+        "completion_tokens": usage_int(usage.get("completion_tokens")),
+        "total_tokens": usage_int(usage.get("total_tokens")),
+    }
+
+
+def add_token_usage_counts(current: dict[str, int], update: dict[str, int]) -> dict[str, int]:
+    return {
+        "prompt_tokens": current.get("prompt_tokens", 0) + update.get("prompt_tokens", 0),
+        "completion_tokens": current.get("completion_tokens", 0) + update.get("completion_tokens", 0),
+        "total_tokens": current.get("total_tokens", 0) + update.get("total_tokens", 0),
+    }
+
+
+def accumulate_token_usage(current: dict[str, int], payload: dict[str, object] | None) -> dict[str, int]:
+    usage = normalize_token_usage(payload)
+    return {
+        "prompt_tokens": current.get("prompt_tokens", 0) + usage["prompt_tokens"],
+        "completion_tokens": current.get("completion_tokens", 0) + usage["completion_tokens"],
+        "total_tokens": current.get("total_tokens", 0) + usage["total_tokens"],
+    }
+
+
+def stop_reason_for_limits(
+    *,
+    elapsed_seconds: int,
+    token_usage: dict[str, int],
+    max_runtime_seconds: int | None,
+    max_total_tokens: int | None,
+) -> str | None:
+    if max_runtime_seconds and elapsed_seconds >= max_runtime_seconds:
+        return "max_runtime_seconds"
+    if max_total_tokens and token_usage.get("total_tokens", 0) >= max_total_tokens:
+        return "max_total_tokens"
+    return None
+
+
+def request_validated_action_with_retry(
+    base_url: str,
+    api_key: str,
+    model: str,
+    messages: list[dict[str, str]],
+    model_settings: dict[str, object],
+    *,
+    invalid_response_retries: int = INVALID_MODEL_RESPONSE_RETRIES,
+) -> dict[str, object]:
+    invalid_attempts: list[dict[str, object]] = []
+    round_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    last_error: ValueError | None = None
+
+    for attempt in range(1, invalid_response_retries + 2):
+        response_text, raw_response = call_model(base_url, api_key, model, messages, model_settings)
+        usage = normalize_token_usage(raw_response)
+        round_usage = add_token_usage_counts(round_usage, usage)
+        try:
+            action = validate_action(extract_json_object(response_text))
+            return {
+                "response_text": response_text,
+                "raw_response": raw_response,
+                "action": action,
+                "round_usage": round_usage,
+                "invalid_attempts": invalid_attempts,
+            }
+        except ValueError as exc:
+            last_error = exc
+            invalid_attempts.append(
+                {
+                    "attempt": attempt,
+                    "error": str(exc),
+                    "response_text": response_text,
+                    "raw_response": raw_response,
+                    "usage": usage,
+                    "ts": iso_now(),
+                }
+            )
+            if attempt > invalid_response_retries:
+                raise InvalidModelResponseError(str(exc), attempts=invalid_attempts) from exc
+
+    raise InvalidModelResponseError(str(last_error or "invalid model response"), attempts=invalid_attempts)
+
+
+def persist_invalid_response_attempt(round_dir: Path, events_file: Path, *, round_index: int, attempt_payload: dict[str, object]) -> None:
+    attempt = int(attempt_payload.get("attempt") or 0)
+    suffix = f"{attempt:02d}"
+    (round_dir / f"response.invalid-{suffix}.txt").write_text(str(attempt_payload.get("response_text") or ""), encoding="utf-8")
+    write_json(round_dir / f"response.invalid-{suffix}.raw.json", attempt_payload.get("raw_response") or {})
+    append_jsonl(
+        events_file,
+        {
+            "event": "model_response_invalid",
+            "round": round_index,
+            "attempt": attempt,
+            "error": attempt_payload.get("error"),
+            "prompt_tokens": ((attempt_payload.get("usage") or {}) if isinstance(attempt_payload.get("usage"), dict) else {}).get("prompt_tokens"),
+            "completion_tokens": ((attempt_payload.get("usage") or {}) if isinstance(attempt_payload.get("usage"), dict) else {}).get("completion_tokens"),
+            "total_tokens": ((attempt_payload.get("usage") or {}) if isinstance(attempt_payload.get("usage"), dict) else {}).get("total_tokens"),
+            "ts": attempt_payload.get("ts") or iso_now(),
+        },
+    )
+
+
 def run_tool(action: dict[str, object]) -> dict[str, object]:
     completed = run_command(["python3", str(resolve_tool_file())], input_text=json.dumps(action, ensure_ascii=False))
     try:
@@ -487,6 +608,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-settings-json", default=os.environ.get("MARATHON_MODEL_SETTINGS_JSON", ""))
     parser.add_argument("--max-rounds", type=int, default=int(os.environ.get("MAX_ROUNDS", "0")))
     parser.add_argument("--sleep-seconds", type=float, default=float(os.environ.get("ROUND_SLEEP_SECONDS", "1")))
+    parser.add_argument("--max-runtime-seconds", type=int, default=int(os.environ.get("MAX_RUNTIME_SECONDS", "0")))
+    parser.add_argument("--max-total-tokens", type=int, default=int(os.environ.get("MAX_TOTAL_TOKENS", "0")))
     return parser.parse_args()
 
 
@@ -494,6 +617,9 @@ def main() -> None:
     args = parse_args()
     if not args.api_key:
         print("missing MARATHON_API_KEY", file=sys.stderr)
+        sys.exit(2)
+    if not args.base_url:
+        print("missing MARATHON_BASE_URL", file=sys.stderr)
         sys.exit(2)
 
     log_root = Path(args.log_root)
@@ -509,6 +635,8 @@ def main() -> None:
 
     system_prompt = Path(args.prompt_file).read_text(encoding="utf-8")
     model_settings = load_model_settings(args.model_settings_json)
+    max_runtime_seconds = args.max_runtime_seconds if args.max_runtime_seconds > 0 else None
+    max_total_tokens = args.max_total_tokens if args.max_total_tokens > 0 else None
     status_file = run_dir / "status.json"
     events_file = run_dir / "events.jsonl"
     pid_file = run_dir / "agent.pid"
@@ -535,7 +663,10 @@ def main() -> None:
         "tool_file": str(tool_file),
         "sandbox_dir": str(sandbox_dir),
         "model_settings": model_settings,
+        "max_runtime_seconds": max_runtime_seconds,
+        "max_total_tokens": max_total_tokens,
     }
+    token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     write_json(run_dir / "run.json", metadata)
     update_status(
         status_file,
@@ -544,6 +675,10 @@ def main() -> None:
             "state": "running",
             "completed_rounds": 0,
             "pid": os.getpid(),
+            "token_usage_prompt": 0,
+            "token_usage_completion": 0,
+            "token_usage_total": 0,
+            "elapsed_seconds": 0,
             "updated_at": iso_now(),
         },
     )
@@ -551,19 +686,49 @@ def main() -> None:
     git_commit(run_dir, "run initialized")
 
     round_index = 1
+    completed_rounds = 0
+    started_monotonic = time.monotonic()
+    stop_reason = None
     try:
         while args.max_rounds == 0 or round_index <= args.max_rounds:
+            elapsed_seconds = max(0, int(time.monotonic() - started_monotonic))
+            stop_reason = stop_reason_for_limits(
+                elapsed_seconds=elapsed_seconds,
+                token_usage=token_usage,
+                max_runtime_seconds=max_runtime_seconds,
+                max_total_tokens=max_total_tokens,
+            )
+            if stop_reason:
+                append_jsonl(
+                    events_file,
+                    {
+                        "event": "run_budget_reached",
+                        "round": completed_rounds,
+                        "stop_reason": stop_reason,
+                        "elapsed_seconds": elapsed_seconds,
+                        "token_usage_total": token_usage["total_tokens"],
+                        "ts": iso_now(),
+                    },
+                )
+                break
+
             if (run_dir / "STOP").exists():
                 update_status(
                     status_file,
                     {
                         **metadata,
                         "state": "stopping",
-                        "completed_rounds": round_index - 1,
+                        "completed_rounds": completed_rounds,
                         "pid": os.getpid(),
+                        "token_usage_prompt": token_usage["prompt_tokens"],
+                        "token_usage_completion": token_usage["completion_tokens"],
+                        "token_usage_total": token_usage["total_tokens"],
+                        "elapsed_seconds": elapsed_seconds,
+                        "stop_reason": "stop_requested",
                         "updated_at": iso_now(),
                     },
                 )
+                stop_reason = "stop_requested"
                 break
 
             round_dir = rounds_dir / f"{round_index:04d}"
@@ -590,10 +755,28 @@ def main() -> None:
             tool_result: dict[str, object] = {}
             sandbox_commit: dict[str, object] = {}
             state_after: dict[str, object] = {}
+            round_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+            invalid_response_attempts: list[dict[str, object]] = []
 
             try:
-                response_text, raw_response = call_model(args.base_url, args.api_key, args.model, messages, model_settings)
-                action = validate_action(extract_json_object(response_text))
+                action_request = request_validated_action_with_retry(
+                    args.base_url,
+                    args.api_key,
+                    args.model,
+                    messages,
+                    model_settings,
+                )
+                response_text = str(action_request["response_text"])
+                raw_response = action_request["raw_response"] if isinstance(action_request["raw_response"], dict) else {}
+                action = action_request["action"] if isinstance(action_request["action"], dict) else {}
+                round_usage = action_request["round_usage"] if isinstance(action_request["round_usage"], dict) else round_usage
+                invalid_response_attempts = (
+                    action_request["invalid_attempts"] if isinstance(action_request["invalid_attempts"], list) else []
+                )
+                for invalid_attempt in invalid_response_attempts:
+                    if isinstance(invalid_attempt, dict):
+                        persist_invalid_response_attempt(round_dir, events_file, round_index=round_index, attempt_payload=invalid_attempt)
+                token_usage = add_token_usage_counts(token_usage, round_usage)
                 tool_result = run_tool(action)
                 sandbox_commit = commit_sandbox(round_index, action)
                 state_after = collect_state()
@@ -622,6 +805,9 @@ def main() -> None:
                     "thought": action.get("thought"),
                     "argv": action.get("argv"),
                     "timeout": action.get("timeout"),
+                    "prompt_tokens": round_usage["prompt_tokens"],
+                    "completion_tokens": round_usage["completion_tokens"],
+                    "total_tokens": round_usage["total_tokens"],
                     "tool_ok": tool_result.get("ok"),
                     "returncode": tool_result.get("returncode"),
                     "stdout_tail": trim_text(tool_result.get("stdout"), limit=4000),
@@ -636,12 +822,14 @@ def main() -> None:
                 append_jsonl(events_file, event)
                 append_jsonl(blog_file, round_post)
                 write_json(live_round_file, round_post)
+                completed_rounds = round_index
+                elapsed_seconds = max(0, int(time.monotonic() - started_monotonic))
                 update_status(
                     status_file,
                     {
                         **metadata,
                         "state": "running",
-                        "completed_rounds": round_index,
+                        "completed_rounds": completed_rounds,
                         "pid": os.getpid(),
                         "last_round": round_index,
                         "last_done": action.get("done"),
@@ -650,12 +838,30 @@ def main() -> None:
                         "last_summary": action.get("summary"),
                         "last_argv": action.get("argv"),
                         "last_returncode": tool_result.get("returncode"),
+                        "token_usage_prompt": token_usage["prompt_tokens"],
+                        "token_usage_completion": token_usage["completion_tokens"],
+                        "token_usage_total": token_usage["total_tokens"],
+                        "elapsed_seconds": elapsed_seconds,
                         "updated_at": iso_now(),
                     },
                 )
                 git_commit(run_dir, f"round {round_index}")
                 print(json.dumps(round_post, ensure_ascii=False), flush=True)
             except Exception as exc:
+                if isinstance(exc, InvalidModelResponseError):
+                    invalid_response_attempts = exc.attempts
+                    for invalid_attempt in invalid_response_attempts:
+                        if isinstance(invalid_attempt, dict):
+                            persist_invalid_response_attempt(round_dir, events_file, round_index=round_index, attempt_payload=invalid_attempt)
+                    if invalid_response_attempts:
+                        last_invalid = invalid_response_attempts[-1]
+                        live_response_file.write_text(str(last_invalid.get("response_text") or ""), encoding="utf-8")
+                        round_usage = invalid_response_attempts[-1].get("usage") if isinstance(invalid_response_attempts[-1].get("usage"), dict) else round_usage
+                        accumulated_invalid_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+                        for invalid_attempt in invalid_response_attempts:
+                            usage = invalid_attempt.get("usage") if isinstance(invalid_attempt.get("usage"), dict) else {}
+                            accumulated_invalid_usage = add_token_usage_counts(accumulated_invalid_usage, usage)  # type: ignore[arg-type]
+                        token_usage = add_token_usage_counts(token_usage, accumulated_invalid_usage)
                 error_payload = {"round": round_index, "error": str(exc)}
                 write_json(round_dir / "error.json", error_payload)
                 append_jsonl(events_file, {"event": "round_failed", **error_payload, "ts": iso_now()})
@@ -664,15 +870,39 @@ def main() -> None:
                     {
                         **metadata,
                         "state": "failed",
-                        "completed_rounds": round_index - 1,
+                        "completed_rounds": completed_rounds,
                         "failed_round": round_index,
                         "error": str(exc),
                         "pid": os.getpid(),
+                        "token_usage_prompt": token_usage["prompt_tokens"],
+                        "token_usage_completion": token_usage["completion_tokens"],
+                        "token_usage_total": token_usage["total_tokens"],
+                        "elapsed_seconds": max(0, int(time.monotonic() - started_monotonic)),
                         "updated_at": iso_now(),
                     },
                 )
                 git_commit(run_dir, f"round {round_index} failed")
                 raise
+
+            stop_reason = stop_reason_for_limits(
+                elapsed_seconds=elapsed_seconds,
+                token_usage=token_usage,
+                max_runtime_seconds=max_runtime_seconds,
+                max_total_tokens=max_total_tokens,
+            )
+            if stop_reason:
+                append_jsonl(
+                    events_file,
+                    {
+                        "event": "run_budget_reached",
+                        "round": completed_rounds,
+                        "stop_reason": stop_reason,
+                        "elapsed_seconds": elapsed_seconds,
+                        "token_usage_total": token_usage["total_tokens"],
+                        "ts": iso_now(),
+                    },
+                )
+                break
 
             round_index += 1
             if args.sleep_seconds > 0:
@@ -684,8 +914,12 @@ def main() -> None:
             {
                 **metadata,
                 "state": "interrupted",
-                "completed_rounds": round_index - 1,
+                "completed_rounds": completed_rounds,
                 "pid": os.getpid(),
+                "token_usage_prompt": token_usage["prompt_tokens"],
+                "token_usage_completion": token_usage["completion_tokens"],
+                "token_usage_total": token_usage["total_tokens"],
+                "elapsed_seconds": max(0, int(time.monotonic() - started_monotonic)),
                 "updated_at": iso_now(),
             },
         )
@@ -698,12 +932,27 @@ def main() -> None:
         {
             **metadata,
             "state": final_state,
-            "completed_rounds": round_index - 1,
+            "completed_rounds": completed_rounds,
             "pid": os.getpid(),
+            "token_usage_prompt": token_usage["prompt_tokens"],
+            "token_usage_completion": token_usage["completion_tokens"],
+            "token_usage_total": token_usage["total_tokens"],
+            "elapsed_seconds": max(0, int(time.monotonic() - started_monotonic)),
+            "stop_reason": stop_reason,
             "updated_at": iso_now(),
         },
     )
-    append_jsonl(events_file, {"event": "run_finished", "state": final_state, "completed_rounds": round_index - 1, "ts": iso_now()})
+    append_jsonl(
+        events_file,
+        {
+            "event": "run_finished",
+            "state": final_state,
+            "completed_rounds": completed_rounds,
+            "stop_reason": stop_reason,
+            "token_usage_total": token_usage["total_tokens"],
+            "ts": iso_now(),
+        },
+    )
     git_commit(run_dir, f"run {final_state}")
 
 

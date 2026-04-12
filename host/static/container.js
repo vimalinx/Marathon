@@ -16,14 +16,24 @@
   } = window.MarathonUi;
 
   let currentContainer = '';
+  let currentRunSummary = null;
   let refreshTimer = null;
   let loading = false;
   let lastKnownLiveState = false;
+  let settingsDirty = false;
+  let settingsContainer = '';
 
   function setText(id, value) {
     const node = document.getElementById(id);
     if (node) {
       node.textContent = value;
+    }
+  }
+
+  function setValue(id, value) {
+    const node = document.getElementById(id);
+    if (node) {
+      node.value = value == null ? '' : String(value);
     }
   }
 
@@ -80,6 +90,125 @@
     const node = document.getElementById('detailBanner');
     node.className = `banner ${tone}`.trim();
     node.textContent = message;
+  }
+
+  function formatDurationSeconds(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number) || number < 0) return '-';
+    if (number < 60) return `${Math.round(number)} 秒`;
+    const minutes = number / 60;
+    if (minutes < 60) {
+      return Number.isInteger(minutes) ? `${minutes} 分钟` : `${minutes.toFixed(1)} 分钟`;
+    }
+    const hours = minutes / 60;
+    return Number.isInteger(hours) ? `${hours} 小时` : `${hours.toFixed(1)} 小时`;
+  }
+
+  function secondsToMinutesValue(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number) || number <= 0) return '';
+    const minutes = number / 60;
+    return Number.isInteger(minutes) ? String(minutes) : String(minutes.toFixed(2));
+  }
+
+  function settingsMinutesToSeconds(id) {
+    const raw = document.getElementById(id).value.trim();
+    if (!raw) return null;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      throw new Error('任务时长上限必须是非负数字。');
+    }
+    return Math.round(parsed * 60);
+  }
+
+  function markSettingsDirty() {
+    settingsDirty = true;
+    setText('settingsBackupNote', '有未保存修改。保存时会先创建一份容器设置备份。');
+  }
+
+  function collectContainerSettingsPayload() {
+    const payload = {};
+
+    function assignText(key, id) {
+      const value = document.getElementById(id).value.trim();
+      if (value) payload[key] = value;
+    }
+
+    function assignNumber(key, id) {
+      const value = document.getElementById(id).value.trim();
+      if (!value) return;
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed) || parsed < 0) {
+        throw new Error(`${key} 必须是非负数字。`);
+      }
+      payload[key] = Number.isInteger(parsed) ? parsed : parsed;
+    }
+
+    assignText('mode', 'settingsModeSelect');
+    assignText('task_prompt', 'settingsTaskPrompt');
+    assignText('model', 'settingsModel');
+    assignText('base_url', 'settingsBaseUrl');
+    assignText('reasoning_effort', 'settingsReasoningEffort');
+    assignNumber('temperature', 'settingsTemperature');
+    assignNumber('top_p', 'settingsTopP');
+    assignNumber('max_rounds', 'settingsMaxRounds');
+    assignNumber('sleep_seconds', 'settingsSleepSeconds');
+    assignNumber('max_total_tokens', 'settingsMaxTotalTokens');
+    assignNumber('max_completion_tokens', 'settingsMaxCompletionTokens');
+    assignNumber('request_timeout_seconds', 'settingsRequestTimeoutSeconds');
+
+    const maxRuntimeSeconds = settingsMinutesToSeconds('settingsMaxRuntimeMinutes');
+    if (maxRuntimeSeconds != null) {
+      payload.max_runtime_seconds = maxRuntimeSeconds;
+    }
+    return payload;
+  }
+
+  function renderContainerSettings(containerDetail) {
+    const settings = containerDetail.saved_agent_settings || {};
+    const backupSummary = containerDetail.settings_backup_summary || {};
+    const latestBackup = backupSummary.latest || null;
+    const containerChanged = settingsContainer !== currentContainer;
+    if (containerChanged) {
+      settingsContainer = currentContainer;
+      settingsDirty = false;
+    }
+
+    if (!settingsDirty) {
+      setValue('settingsModeSelect', settings.mode || '');
+      setValue('settingsTaskPrompt', settings.task_prompt || '');
+      setValue('settingsModel', settings.model || '');
+      setValue('settingsBaseUrl', settings.base_url || '');
+      setValue('settingsReasoningEffort', settings.reasoning_effort || '');
+      setValue('settingsTemperature', settings.temperature ?? '');
+      setValue('settingsTopP', settings.top_p ?? '');
+      setValue('settingsMaxRounds', settings.max_rounds ?? '');
+      setValue('settingsSleepSeconds', settings.sleep_seconds ?? '');
+      setValue('settingsMaxRuntimeMinutes', secondsToMinutesValue(settings.max_runtime_seconds));
+      setValue('settingsMaxTotalTokens', settings.max_total_tokens ?? '');
+      setValue('settingsMaxCompletionTokens', settings.max_completion_tokens ?? '');
+      setValue('settingsRequestTimeoutSeconds', settings.request_timeout_seconds ?? '');
+    }
+
+    setText(
+      'settingsSubtitle',
+      Object.keys(settings).length
+        ? '这个容器已经保存了一份默认运行配置。后续直接启动或基于它新建任务时，会先应用这些值。'
+        : '这个容器当前还没有保存默认运行配置。你可以在这里把常用的节奏和预算参数固定下来。',
+    );
+
+    if (settingsDirty) {
+      setText('settingsBackupNote', '有未保存修改。保存时会先创建一份容器设置备份。');
+    } else if (latestBackup) {
+      setText(
+        'settingsBackupNote',
+        `备份 ${backupSummary.count || 0} 份 · 最近一次：${formatTime(latestBackup.updated_at)} · ${latestBackup.path}`,
+      );
+    } else {
+      setText('settingsBackupNote', '还没有备份记录。首次保存默认设置时会自动创建。');
+    }
+
+    document.getElementById('clearContainerSettingsBtn').disabled = !Object.keys(settings).length && !settingsDirty;
   }
 
   function clearRefreshTimer() {
@@ -520,9 +649,19 @@
       { key: 'live_stdout_tail', label: '任务进程标准输出', text: runDetail.live_stdout_tail || '' },
       { key: 'live_stderr_tail', label: '任务进程错误输出', text: runDetail.live_stderr_tail || '' },
       { key: 'events_tail', label: '事件记录', text: runDetail.events_tail || '' },
+      { key: 'latest_response_text', label: '最近模型响应', text: runDetail.latest_response_text || '' },
+      { key: 'latest_round_error_text', label: '最近失败摘要', text: runDetail.latest_round_error_text || '' },
       { key: 'supervisor_stdout_tail', label: '调度器标准输出', text: runDetail.supervisor_stdout_tail || '' },
       { key: 'supervisor_stderr_tail', label: '调度器错误输出', text: runDetail.supervisor_stderr_tail || '' },
     ];
+
+    (runDetail.invalid_response_artifacts || []).forEach((artifact, index) => {
+      sources.push({
+        key: `invalid_response_${index}`,
+        label: `无效响应 R${artifact.round} A${artifact.attempt}`,
+        text: artifact.text || artifact.raw_json_text || '',
+      });
+    });
 
     const initial = sources.find((source) => source.text.trim()) || sources[0];
 
@@ -573,7 +712,33 @@
     document.getElementById('bindAgentHandle').value = '';
     document.getElementById('bindAgentNote').textContent = '当前没有可绑定的容器。';
     setMetaGrid('resourceGrid', []);
+    settingsDirty = false;
+    settingsContainer = '';
+    [
+      'settingsModeSelect',
+      'settingsTaskPrompt',
+      'settingsModel',
+      'settingsBaseUrl',
+      'settingsReasoningEffort',
+      'settingsTemperature',
+      'settingsTopP',
+      'settingsMaxRounds',
+      'settingsSleepSeconds',
+      'settingsMaxRuntimeMinutes',
+      'settingsMaxTotalTokens',
+      'settingsMaxCompletionTokens',
+      'settingsRequestTimeoutSeconds',
+    ].forEach((id) => setValue(id, ''));
+    setText('settingsSubtitle', '当前没有可编辑的容器默认设置。');
+    setText('settingsBackupNote', '当前没有可显示的设置备份信息。');
+    document.getElementById('clearContainerSettingsBtn').disabled = true;
     renderLogs(null);
+    currentRunSummary = null;
+    document.getElementById('retryAgentBtn').disabled = true;
+    document.getElementById('retryAgentBtn').textContent = '手动重试';
+    document.getElementById('startContainerBtn').disabled = true;
+    document.getElementById('stopContainerBtn').disabled = true;
+    document.getElementById('restartContainerBtn').disabled = true;
     document.getElementById('stopAgentBtn').disabled = true;
   }
 
@@ -610,6 +775,7 @@
         preferredRunForContainer(overview, currentContainer);
       const runDetail = runSummary?.run_id ? await api(`/api/runs/${encodeURIComponent(runSummary.run_id)}`) : null;
       const runtime = runDetail?.container_runtime || containerDetail.container_runtime || {};
+      currentRunSummary = runSummary || null;
       const live = isLiveRun(containerDetail, runSummary);
       const posts = mergeBlogPosts(containerDetail.blog_posts || [], runDetail?.blog_posts || [], runDetail?.recent_rounds || []);
       const latestPost = posts[0] || containerDetail.latest_blog_post || null;
@@ -631,6 +797,22 @@
           : '这个容器还没有 round 记录，等第一轮结束后这里会开始长内容。',
       );
       document.getElementById('stopAgentBtn').disabled = !containerDetail.active_run;
+      const containerState = String(runtime.state || containerDetail.container?.state || '').toUpperCase();
+      document.getElementById('startContainerBtn').disabled = containerState === 'RUNNING';
+      document.getElementById('stopContainerBtn').disabled = containerState !== 'RUNNING';
+      document.getElementById('restartContainerBtn').disabled = containerState !== 'RUNNING';
+      if (containerDetail.active_run) {
+        document.getElementById('retryAgentBtn').disabled = true;
+        document.getElementById('retryAgentBtn').textContent = '任务执行中';
+      } else if (runSummary) {
+        document.getElementById('retryAgentBtn').disabled = false;
+        document.getElementById('retryAgentBtn').textContent = String(runSummary.state || '').toLowerCase() === 'failed'
+          ? '重试失败任务'
+          : '手动重试上次任务';
+      } else {
+        document.getElementById('retryAgentBtn').disabled = false;
+        document.getElementById('retryAgentBtn').textContent = '按默认设置启动';
+      }
 
       setRunStrip(
         live ? 'AI 正在运行' : runSummary ? '最近一次运行' : '当前没有任务',
@@ -642,10 +824,26 @@
           { label: '运行方式', value: runSummary ? formatMode(runSummary.mode) : '-' },
           { label: '博客篇数', value: String(blogCount || '-') },
           { label: '已完成轮次', value: runSummary ? String(runSummary.completed_rounds ?? '-') : '-' },
+          {
+            label: '累计 token',
+            value:
+              runSummary && runSummary.token_usage_total != null
+                ? `${runSummary.token_usage_total}${runSummary.max_total_tokens ? ` / ${runSummary.max_total_tokens}` : ''}`
+                : '-',
+          },
+          {
+            label: '已运行',
+            value: runSummary ? formatDurationSeconds(runSummary.elapsed_seconds) : '-',
+          },
+          {
+            label: '时长上限',
+            value: runSummary ? formatDurationSeconds(runSummary.max_runtime_seconds) : '-',
+          },
           { label: '刷新', value: refreshLabel(live) },
         ],
       );
       renderIdentityGrid(runSummary, currentContainer, containerDetail.agent_binding);
+      renderContainerSettings(containerDetail);
 
       if (live) {
         setBanner(`这本日志正在继续写作：${runSummary?.run_id || currentContainer}。新的文章会自动出现在顶部。`, 'good');
@@ -692,6 +890,77 @@
     }
   });
 
+  document.getElementById('retryAgentBtn').addEventListener('click', async () => {
+    if (!currentContainer) return;
+    try {
+      let result;
+      if (currentRunSummary) {
+        result = await post(`/api/containers/${encodeURIComponent(currentContainer)}/retry-agent`, {});
+        if (!result.ok) {
+          throw new Error(result.error || result.step || '手动重试失败');
+        }
+        setBanner(`已基于 ${result.retried_from_run_id} 重新发起任务。`, 'good');
+      } else {
+        result = await post(`/api/containers/${encodeURIComponent(currentContainer)}/launch-agent`, {});
+        if (!result.ok) {
+          throw new Error(result.error || result.step || '启动任务失败');
+        }
+        setBanner(`已按默认设置在 ${currentContainer} 上启动新任务。`, 'good');
+      }
+      await loadPage();
+    } catch (error) {
+      setBanner(error.message, 'bad');
+    }
+  });
+
+  document.getElementById('startContainerBtn').addEventListener('click', async () => {
+    if (!currentContainer) return;
+    try {
+      const result = await post(`/api/containers/${encodeURIComponent(currentContainer)}/start`, {});
+      if (!result.ok) {
+        throw new Error(result.error || result.stderr || '启动容器失败');
+      }
+      setBanner(`已启动容器 ${currentContainer}。`, 'good');
+      await loadPage();
+    } catch (error) {
+      setBanner(error.message, 'bad');
+    }
+  });
+
+  document.getElementById('stopContainerBtn').addEventListener('click', async () => {
+    if (!currentContainer) return;
+    if (!window.confirm(`确认停止容器 ${currentContainer} 吗？如果里面还有运行中的任务，它会被中断。`)) {
+      return;
+    }
+    try {
+      const result = await post(`/api/containers/${encodeURIComponent(currentContainer)}/stop`, {});
+      if (!result.ok) {
+        throw new Error(result.error || result.stderr || '停止容器失败');
+      }
+      setBanner(`已请求停止容器 ${currentContainer}。`, 'good');
+      await loadPage();
+    } catch (error) {
+      setBanner(error.message, 'bad');
+    }
+  });
+
+  document.getElementById('restartContainerBtn').addEventListener('click', async () => {
+    if (!currentContainer) return;
+    if (!window.confirm(`确认重启容器 ${currentContainer} 吗？当前运行中的任务会被打断。`)) {
+      return;
+    }
+    try {
+      const result = await post(`/api/containers/${encodeURIComponent(currentContainer)}/restart`, {});
+      if (!result.ok) {
+        throw new Error(result.error || result.stderr || '重启容器失败');
+      }
+      setBanner(`已重启容器 ${currentContainer}。`, 'good');
+      await loadPage();
+    } catch (error) {
+      setBanner(error.message, 'bad');
+    }
+  });
+
   document.getElementById('bindAgentForm').addEventListener('submit', async (event) => {
     event.preventDefault();
     if (!currentContainer) return;
@@ -726,6 +995,64 @@
     } catch (error) {
       setBanner(error.message, 'bad');
     }
+  });
+
+  document.getElementById('containerSettingsForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!currentContainer) return;
+    try {
+      const settings = collectContainerSettingsPayload();
+      if (!Object.keys(settings).length) {
+        setBanner('当前没有可保存的默认设置；如果想移除它们，请点“清空默认设置”。', 'warn');
+        return;
+      }
+      const result = await post(`/api/containers/${encodeURIComponent(currentContainer)}/settings`, { agent_settings: settings });
+      settingsDirty = false;
+      setBanner(
+        result.backup
+          ? `已保存 ${currentContainer} 的默认设置，并创建了备份。`
+          : `已保存 ${currentContainer} 的默认设置。`,
+        'good',
+      );
+      await loadPage();
+    } catch (error) {
+      setBanner(error.message, 'bad');
+    }
+  });
+
+  document.getElementById('clearContainerSettingsBtn').addEventListener('click', async () => {
+    if (!currentContainer) return;
+    if (!window.confirm(`确认清空 ${currentContainer} 的默认运行设置吗？保存过的备份会保留。`)) {
+      return;
+    }
+    try {
+      await post(`/api/containers/${encodeURIComponent(currentContainer)}/settings`, { clear: true });
+      settingsDirty = false;
+      setBanner(`已清空 ${currentContainer} 的默认运行设置。`, 'good');
+      await loadPage();
+    } catch (error) {
+      setBanner(error.message, 'bad');
+    }
+  });
+
+  [
+    'settingsModeSelect',
+    'settingsTaskPrompt',
+    'settingsModel',
+    'settingsBaseUrl',
+    'settingsReasoningEffort',
+    'settingsTemperature',
+    'settingsTopP',
+    'settingsMaxRounds',
+    'settingsSleepSeconds',
+    'settingsMaxRuntimeMinutes',
+    'settingsMaxTotalTokens',
+    'settingsMaxCompletionTokens',
+    'settingsRequestTimeoutSeconds',
+  ].forEach((id) => {
+    const node = document.getElementById(id);
+    node.addEventListener('input', markSettingsDirty);
+    node.addEventListener('change', markSettingsDirty);
   });
 
   document.addEventListener('visibilitychange', () => {

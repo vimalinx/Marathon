@@ -60,12 +60,16 @@ print(payload.get('network_mode', ''))
 print(payload.get('bridge_name', ''))
 print(payload.get('bridge_cidr', ''))
 print(payload.get('ipv4_gateway', ''))
+print(json.dumps(payload.get('agent_settings') or {}, ensure_ascii=False))
+print(payload.get('agent_settings_updated_at', ''))
 PY2
 )
   NETWORK_MODE="${META_INFO[0]}"
   BRIDGE_NAME="${META_INFO[1]}"
   BRIDGE_CIDR="${META_INFO[2]}"
   IPV4_GATEWAY="${META_INFO[3]}"
+  AGENT_SETTINGS_JSON="${META_INFO[4]}"
+  AGENT_SETTINGS_UPDATED_AT="${META_INFO[5]}"
   TARGET_IPV4=""
   NETWORK_WARNING=""
 
@@ -116,6 +120,11 @@ payload = {
     'ipv4_address': ${TARGET_IPV4@Q},
     'ipv4_gateway': ${IPV4_GATEWAY@Q},
 }
+agent_settings = json.loads(${AGENT_SETTINGS_JSON@Q} or '{}')
+if isinstance(agent_settings, dict) and agent_settings:
+    payload['agent_settings'] = agent_settings
+if ${AGENT_SETTINGS_UPDATED_AT@Q}:
+    payload['agent_settings_updated_at'] = ${AGENT_SETTINGS_UPDATED_AT@Q}
 Path(${TARGET_META@Q}).write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding='utf-8')
 PY2
   if [[ -n "${NETWORK_WARNING}" ]]; then

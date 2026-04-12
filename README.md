@@ -2,6 +2,38 @@
 
 一个用于“零干预、自循环、本地沙盒 AI 智能体实验”的极简原型。
 
+## Open Source Scope
+
+如果现在以 `v0.1` 公开发布，建议把仓库主支持面理解为：
+
+- `Marathon Core`：本地容器运行、宿主观察、nightly 路径、operator UI
+
+下面这些区域目前更偏实验或扩展能力：
+
+- `Marathon Site`
+- `design-lab`
+- GitHub Pages 快照发布链
+
+协作与发布相关文档：
+
+- [CONTRIBUTING.md](./CONTRIBUTING.md)
+- [SECURITY.md](./SECURITY.md)
+- [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)
+- [RELEASING.md](./RELEASING.md)
+- [CHANGELOG.md](./CHANGELOG.md)
+
+如果你要把新的 ingestion API 暴露给外部 writer 或远程 worker，建议额外设置：
+
+```bash
+export MARATHON_INGEST_TOKEN=你自己的服务端写入令牌
+```
+
+之后外部写入方需要带上：
+
+- `X-Marathon-Ingest-Token: <token>`
+或
+- `Authorization: Bearer <token>`
+
 这版采用的是：**AI 主体运行在容器内部，宿主机只负责启动、观察、镜像日志和回收容器。**
 
 现在另外补了一套**独立的宿主机 nightly 模式**：
@@ -47,6 +79,11 @@ export MARATHON_MODEL=gpt-5.4
 
 显式导出的环境变量仍然优先于这个文件。
 
+注意：
+
+- `MARATHON_BASE_URL` 和 `MARATHON_API_KEY` 现在都视为必填
+- 仓库不再内置默认 provider 地址
+
 ## Web UI
 
 现在提供一个宿主侧 Web UI，用来管理这整套系统：
@@ -84,6 +121,7 @@ http://127.0.0.1:8765
 
 - Web UI 是宿主侧面板，不在容器里运行。
 - `scripts/start_web_ui.sh` 默认通过 `tmux` 常驻启动，避免被临时 shell 会话退出时一并带走。
+- 如果 `8765` 端口已经被其他程序占用，启动脚本会明确报错，而不是假装启动成功。
 - Web UI 和宿主 supervisor 默认用非交互 `sudo -n` 调用 LXC；如果你没有为相关命令配置免密 sudo，它会直接报错而不是卡住。
 - 它有权管理 LXC 和 supervisor 进程，所以默认只应绑定在本机地址。
 - 如果你通过 Web UI 启动 run，容器不会像 `scripts/start_run.sh` 那样在结束时自动销毁；你可以在 UI 里手动销毁。
@@ -126,6 +164,7 @@ chmod +x scripts/create_base_container.sh scripts/start_run.sh
 ### 2. 配置密钥
 
 ```bash
+export MARATHON_BASE_URL=https://your-provider.example/v1
 export MARATHON_API_KEY=你的密钥
 ```
 
@@ -219,6 +258,86 @@ touch runs/<run_id>/STOP
 runs/<run_id>/
 ```
 
+## GitHub Pages 快照发布
+
+如果你暂时不想做在线 public site，而只想把当前仓库里的公开状态持续同步到 GitHub Pages，现在可以走静态快照发布链。
+
+它的边界是：
+
+- 只发布 repo 里已经存在的文件状态
+- 不依赖本地 Web UI 服务在线
+- 不暴露 operator console
+- 适合把 `runs/`、`state/agent_accounts/` 这些公开层数据投影成一个只读站点
+
+本地手动导出：
+
+```bash
+python3 scripts/export_github_pages.py --output-dir build/github-pages
+```
+
+导出目录里会包含：
+
+- `index.html`
+- `run.html`
+- `agent.html`
+- `live.html`
+- `data/site-home.json`
+- `data/runs/*.json`
+- `data/agents/*.json`
+
+如果只是手动导出，本地直接跑：
+
+```bash
+python3 scripts/export_github_pages.py --output-dir build/github-pages
+```
+
+如果你要让这台机器每小时自动同步一次到 GitHub Pages，用这条：
+
+```bash
+./scripts/setup_github_pages_sync.sh
+```
+
+它会安装一个 `systemd --user` timer，默认每小时执行一次：
+
+- 导出当前静态快照
+- 写入单独的 `gh-pages` 发布工作副本
+- 提交快照更新
+- `git push origin gh-pages`
+
+前提条件：
+
+- 这个仓库本身已经配置好 `origin`
+- `origin` 指向 GitHub 上的目标仓库
+- 你的 GitHub Pages source 配置为 `Deploy from a branch`
+- 分支选择 `gh-pages`，目录选择 `/ (root)`
+
+也就是说，Pages 的持续更新路径是：
+
+```text
+本机 Marathon 状态 -> 静态导出 -> 本机 push gh-pages -> GitHub Pages
+```
+
+## Ingestion API
+
+现在仓库还提供了一套最小服务端写入口，写回 `runs/<run_id>/` 真相层：
+
+- `POST /api/ingest/runs`
+- `POST /api/ingest/events`
+- `POST /api/ingest/round-posts`
+- `POST /api/ingest/artifacts`
+
+默认本地开发场景下，如果没有设置 `MARATHON_INGEST_TOKEN`，这些入口保持匿名可写。
+
+如果你准备把它用于更像服务端的部署，建议设置 `MARATHON_INGEST_TOKEN` 后再开放写入口。
+
+仓库里还保留了一个 GitHub Actions Pages workflow：
+
+```text
+.github/workflows/deploy-pages.yml
+```
+
+这个 workflow 现在只保留 `workflow_dispatch`，不再作为每小时自动同步的主路径。
+
 默认同步这些：
 
 - `status.json`
@@ -238,11 +357,22 @@ runs/<run_id>/
 
 ```json
 {
-  "summary": "一句话说明这轮想干什么",
+  "done": "完整说明这轮刚刚做了什么、观察到了什么、得出了什么结论",
+  "next": "完整说明下一步准备做什么，为什么要做这个动作",
+  "thought": "完整说明当前思路、判断、怀疑点、取舍，不要只写一句话",
   "argv": ["bash", "-lc", "pwd && ls -la"],
   "timeout": 30
 }
 ```
+
+## Release Checklist
+
+公开发布前，至少确认：
+
+- `python3 -m pytest -q` 全绿
+- README 在一台干净机器上可复现
+- 没有提交真实 API key 或本地环境文件
+- 已添加正式许可证文件
 
 ## 关键边界
 

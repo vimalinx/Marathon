@@ -2,8 +2,26 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
+import json
+import urllib.request
+from contextlib import contextmanager
+from threading import Thread
 
 import host.web_ui as web_ui
+
+
+@contextmanager
+def serve_app() -> tuple[web_ui.ThreadingHTTPServer, str]:
+    server = web_ui.ThreadingHTTPServer(("127.0.0.1", 0), web_ui.AppHandler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = server.server_address
+        yield server, f"http://{host}:{port}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
 
 
 class ResolveTaskPromptTests(unittest.TestCase):
@@ -46,6 +64,30 @@ class ResolveRunModeTests(unittest.TestCase):
         self.assertEqual(resolved["model_settings"]["request_max_attempts"], 10)
         self.assertEqual(resolved["model_settings"]["request_retry_delay_seconds"], 2.0)
 
+    def test_apply_run_mode_defaults_parses_runtime_budget_fields(self) -> None:
+        resolved = web_ui.apply_run_mode_defaults(
+            {
+                "mode": "task",
+                "task_prompt": "stay focused",
+                "max_rounds": "5",
+                "sleep_seconds": "2.5",
+                "max_runtime_seconds": "600",
+                "max_total_tokens": "12000",
+            },
+            {
+                "model": "gpt-5.4",
+                "base_url": "https://example.com/v1",
+                "api_key": "test-key",
+                "model_settings": {"profile_id": "default", "profile_label": "默认配置", "extra_body": {}},
+                "profile": {"id": "default"},
+            },
+        )
+
+        self.assertEqual(resolved["max_rounds"], 5)
+        self.assertEqual(resolved["sleep_seconds"], 2.5)
+        self.assertEqual(resolved["max_runtime_seconds"], 600)
+        self.assertEqual(resolved["max_total_tokens"], 12000)
+
 
 class ModelProfilesTests(unittest.TestCase):
     def test_read_model_profiles_payload_refreshes_default_profile_from_environment(self) -> None:
@@ -81,6 +123,7 @@ class ModelProfilesTests(unittest.TestCase):
                     {
                         "MARATHON_BASE_URL": "https://example.com/v1",
                         "MARATHON_API_KEY": "new-key",
+                        "MARATHON_MODEL": "gpt-5.4",
                     },
                     clear=False,
                 ):
@@ -88,6 +131,114 @@ class ModelProfilesTests(unittest.TestCase):
 
         self.assertEqual(payload["profiles"][0]["base_url"], "https://example.com/v1")
         self.assertEqual(payload["profiles"][0]["api_key"], "new-key")
+
+    def test_resolve_run_model_config_accepts_runtime_override_fields(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            profiles_file = Path(tmpdir) / "model_profiles.json"
+            profiles_file.write_text(
+                """{
+  "path": "ignored",
+  "default_profile_id": "default",
+  "profiles": [
+    {
+      "id": "default",
+      "label": "默认配置",
+      "model": "gpt-5.4",
+      "base_url": "https://example.com/v1",
+      "api_key": "profile-key",
+      "reasoning_effort": "medium",
+      "temperature": 0.7,
+      "top_p": 0.9,
+      "max_completion_tokens": 3200,
+      "request_timeout_seconds": 120,
+      "request_max_attempts": 3,
+      "request_retry_delay_seconds": 1.0,
+      "extra_body": {"provider":"default"}
+    }
+  ],
+  "updated_at": "2026-03-09T16:39:00+0800"
+}
+""",
+                encoding="utf-8",
+            )
+            with mock.patch.object(web_ui, "MODEL_PROFILES_FILE", profiles_file):
+                resolved = web_ui.resolve_run_model_config(
+                    {
+                        "model": "gpt-5.4-mini",
+                        "base_url": "https://alt.example.com/v1",
+                        "api_key": "request-key",
+                        "reasoning_effort": "high",
+                        "temperature": "0.2",
+                        "top_p": "0.8",
+                        "max_completion_tokens": "6400",
+                        "request_timeout_seconds": "180",
+                        "request_max_attempts": "6",
+                        "request_retry_delay_seconds": "3.5",
+                        "extra_body": "{\"provider\":\"override\"}",
+                    }
+                )
+
+        self.assertEqual(resolved["model"], "gpt-5.4-mini")
+        self.assertEqual(resolved["base_url"], "https://alt.example.com/v1")
+        self.assertEqual(resolved["api_key"], "request-key")
+        self.assertEqual(resolved["model_settings"]["reasoning_effort"], "high")
+        self.assertEqual(resolved["model_settings"]["temperature"], 0.2)
+        self.assertEqual(resolved["model_settings"]["top_p"], 0.8)
+        self.assertEqual(resolved["model_settings"]["max_completion_tokens"], 6400)
+        self.assertEqual(resolved["model_settings"]["request_timeout_seconds"], 180.0)
+        self.assertEqual(resolved["model_settings"]["request_max_attempts"], 6)
+        self.assertEqual(resolved["model_settings"]["request_retry_delay_seconds"], 3.5)
+        self.assertEqual(resolved["model_settings"]["extra_body"], {"provider": "override"})
+
+
+class ModelConnectivityTests(unittest.TestCase):
+    class _FakeResponse:
+        def __init__(self, payload: dict[str, object]) -> None:
+            self.payload = payload
+
+        def __enter__(self) -> "ModelConnectivityTests._FakeResponse":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(self.payload).encode("utf-8")
+
+    def test_test_model_connectivity_returns_latency_preview_and_usage(self) -> None:
+        response = self._FakeResponse(
+            {
+                "model": "gpt-5.4",
+                "choices": [{"message": {"content": "pong"}}],
+                "usage": {"prompt_tokens": 12, "completion_tokens": 3, "total_tokens": 15},
+            }
+        )
+        with mock.patch.object(
+            web_ui,
+            "resolve_run_model_config",
+            return_value={
+                "model": "gpt-5.4",
+                "base_url": "https://example.com/v1",
+                "api_key": "test-key",
+                "model_settings": {
+                    "reasoning_effort": "low",
+                    "request_timeout_seconds": 5,
+                    "request_max_attempts": 1,
+                    "request_retry_delay_seconds": 1,
+                    "extra_body": {},
+                },
+                "profile": {"id": "default"},
+            },
+        ), mock.patch.object(web_ui.urllib.request, "urlopen", return_value=response), mock.patch.object(
+            web_ui.time, "monotonic", side_effect=[10.0, 10.12]
+        ):
+            result = web_ui.test_model_connectivity({"model": "gpt-5.4"})
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["response_model"], "gpt-5.4")
+        self.assertEqual(result["preview"], "pong")
+        self.assertEqual(result["usage"]["total_tokens"], 15)
+        self.assertEqual(result["latency_ms"], 119)
 
 
 class ContainerBlogPayloadTests(unittest.TestCase):
@@ -116,6 +267,163 @@ class ContainerBlogPayloadTests(unittest.TestCase):
         self.assertEqual(len(payload["blog_posts"]), 2)
         self.assertEqual(payload["blog_posts"][0]["done"], "two")
         self.assertEqual(payload["blog_meta"]["post_count"], 2)
+
+    def test_run_detail_exposes_invalid_response_artifacts(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            run_dir = root / "runs" / "run-1"
+            rounds_dir = run_dir / "rounds" / "0004"
+            rounds_dir.mkdir(parents=True)
+            (run_dir / "host_run.json").write_text(
+                '{"container":"sandbox-1","mode":"task","started_at":"2026-04-05T10:00:00+0800"}\n',
+                encoding="utf-8",
+            )
+            (run_dir / "status.json").write_text(
+                '{"state":"failed","completed_rounds":3,"failed_round":4,"updated_at":"2026-04-05T10:05:00+0800"}\n',
+                encoding="utf-8",
+            )
+            (rounds_dir / "response.invalid-01.txt").write_text('bad raw response', encoding="utf-8")
+            (rounds_dir / "response.invalid-01.raw.json").write_text('{"choices":[]}\n', encoding="utf-8")
+            (rounds_dir / "error.json").write_text('{"round":4,"error":"bad json"}\n', encoding="utf-8")
+
+            with mock.patch.object(web_ui, "RUNS_DIR", root / "runs"):
+                payload = web_ui.run_detail("run-1")
+
+        self.assertEqual(len(payload["invalid_response_artifacts"]), 1)
+        self.assertIn("bad raw response", payload["invalid_response_artifacts"][0]["text"])
+        self.assertIn("bad json", payload["latest_round_error_text"])
+
+
+class IngestionRouteTests(unittest.TestCase):
+    def test_ingest_routes_write_run_truth_files(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            runs_dir = Path(tmpdir) / "runs"
+            runs_dir.mkdir()
+
+            def post(base_url: str, path: str, payload: dict[str, object]) -> dict[str, object]:
+                req = urllib.request.Request(
+                    base_url + path,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(req) as response:
+                    return json.loads(response.read().decode("utf-8"))
+
+            with mock.patch.object(web_ui, "RUNS_DIR", runs_dir), mock.patch.object(
+                web_ui.run_index, "RUNS_DIR", runs_dir
+            ), serve_app() as (_, base_url):
+                run_result = post(
+                    base_url,
+                    "/api/ingest/runs",
+                    {
+                        "run_id": "run-ingest-1",
+                        "host_run": {"container": "sandbox-1", "model": "gpt-5.4"},
+                        "status": {"state": "running", "completed_rounds": 0},
+                    },
+                )
+                events_result = post(
+                    base_url,
+                    "/api/ingest/events",
+                    {
+                        "run_id": "run-ingest-1",
+                        "events": [{"event": "run_started", "ts": "2026-04-07T11:00:00+0800"}],
+                    },
+                )
+                posts_result = post(
+                    base_url,
+                    "/api/ingest/round-posts",
+                    {
+                        "run_id": "run-ingest-1",
+                        "posts": [
+                            {
+                                "round": 1,
+                                "done": "checked sandbox",
+                                "next": "open README",
+                                "thought": "need context",
+                                "argv": ["bash", "-lc", "pwd"],
+                                "timeout": 30,
+                            }
+                        ],
+                    },
+                )
+                artifacts_result = post(
+                    base_url,
+                    "/api/ingest/artifacts",
+                    {
+                        "run_id": "run-ingest-1",
+                        "artifacts": [
+                            {"name": "latest_response.txt", "content": "raw response text"},
+                            {"round": 1, "name": "response.invalid-01.txt", "content": "bad json attempt"},
+                            {"round": 1, "name": "response.invalid-01.raw.json", "content": {"choices": []}},
+                        ],
+                    },
+                )
+
+            run_dir = runs_dir / "run-ingest-1"
+            self.assertTrue(run_result["ok"])
+            self.assertEqual(events_result["appended"], 1)
+            self.assertEqual(posts_result["appended"], 1)
+            self.assertEqual(len(artifacts_result["written"]), 3)
+            self.assertTrue((run_dir / "host_run.json").exists())
+            self.assertTrue((run_dir / "status.json").exists())
+            self.assertTrue((run_dir / "events.jsonl").exists())
+            self.assertTrue((run_dir / "blog.jsonl").exists())
+            self.assertTrue((run_dir / "latest_action.json").exists())
+            self.assertEqual((run_dir / "latest_response.txt").read_text(encoding="utf-8"), "raw response text")
+            self.assertEqual(
+                (run_dir / "rounds" / "0001" / "response.invalid-01.txt").read_text(encoding="utf-8"),
+                "bad json attempt",
+            )
+
+    def test_ingest_routes_require_token_when_configured(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            runs_dir = Path(tmpdir) / "runs"
+            runs_dir.mkdir()
+
+            def post(base_url: str, path: str, payload: dict[str, object], *, token: str | None = None) -> tuple[int, str]:
+                headers = {"Content-Type": "application/json"}
+                if token:
+                    headers["X-Marathon-Ingest-Token"] = token
+                req = urllib.request.Request(
+                    base_url + path,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers=headers,
+                    method="POST",
+                )
+                try:
+                    with urllib.request.urlopen(req) as response:
+                        return response.status, response.read().decode("utf-8")
+                except urllib.error.HTTPError as error:
+                    return error.code, error.read().decode("utf-8")
+
+            with mock.patch.object(web_ui, "RUNS_DIR", runs_dir), mock.patch.object(
+                web_ui.run_index, "RUNS_DIR", runs_dir
+            ), mock.patch.dict(web_ui.os.environ, {"MARATHON_INGEST_TOKEN": "secret-ingest"}, clear=False), serve_app() as (_, base_url):
+                missing_status, missing_body = post(
+                    base_url,
+                    "/api/ingest/runs",
+                    {"run_id": "run-ingest-auth-1", "host_run": {"container": "sandbox-1"}},
+                )
+                wrong_status, wrong_body = post(
+                    base_url,
+                    "/api/ingest/runs",
+                    {"run_id": "run-ingest-auth-1", "host_run": {"container": "sandbox-1"}},
+                    token="wrong",
+                )
+                ok_status, ok_body = post(
+                    base_url,
+                    "/api/ingest/runs",
+                    {"run_id": "run-ingest-auth-1", "host_run": {"container": "sandbox-1"}},
+                    token="secret-ingest",
+                )
+
+            self.assertEqual(missing_status, 403)
+            self.assertIn("ingestion token required", missing_body)
+            self.assertEqual(wrong_status, 403)
+            self.assertIn("invalid ingestion token", wrong_body)
+            self.assertEqual(ok_status, 200)
+            self.assertIn('"ok": true', ok_body)
 
 
 class AgentAccountPayloadTests(unittest.TestCase):
@@ -349,6 +657,71 @@ class ContainerAgentBindingTests(unittest.TestCase):
                     web_ui.set_container_agent_binding("sandbox-1", "missing-account")
 
 
+class ContainerAgentSettingsTests(unittest.TestCase):
+    def test_write_container_agent_settings_creates_backup_before_update(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            container_dir = Path(tmpdir) / "containers"
+            backup_dir = Path(tmpdir) / "backups"
+            container_dir.mkdir()
+            (container_dir / "sandbox-1.json").write_text(
+                """{
+  "container_name": "sandbox-1",
+  "network_mode": "bridge-static",
+  "agent_settings": {
+    "max_rounds": 3,
+    "sleep_seconds": 1.0
+  }
+}
+""",
+                encoding="utf-8",
+            )
+
+            with mock.patch.object(web_ui, "CONTAINER_STATE_DIR", container_dir), mock.patch.object(
+                web_ui, "CONTAINER_SETTINGS_BACKUP_DIR", backup_dir
+            ):
+                result = web_ui.write_container_agent_settings(
+                    "sandbox-1",
+                    {"agent_settings": {"max_rounds": 8, "max_total_tokens": 16000}},
+                )
+                saved = web_ui.read_json(container_dir / "sandbox-1.json")
+
+        self.assertTrue(result["ok"])
+        self.assertIsNotNone(result["backup"])
+        self.assertEqual(saved["agent_settings"]["max_rounds"], 8)
+        self.assertEqual(saved["agent_settings"]["max_total_tokens"], 16000)
+        self.assertEqual(saved["network_mode"], "bridge-static")
+        self.assertEqual(result["backup_summary"]["count"], 1)
+
+    def test_merge_container_agent_settings_keeps_explicit_request_values(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            container_dir = Path(tmpdir) / "containers"
+            container_dir.mkdir()
+            (container_dir / "sandbox-1.json").write_text(
+                """{
+  "container_name": "sandbox-1",
+  "agent_settings": {
+    "max_rounds": 7,
+    "sleep_seconds": 2.0,
+    "max_total_tokens": 9000,
+    "model": "gpt-5.4"
+  }
+}
+""",
+                encoding="utf-8",
+            )
+
+            with mock.patch.object(web_ui, "CONTAINER_STATE_DIR", container_dir):
+                merged = web_ui.merge_container_agent_settings(
+                    "sandbox-1",
+                    {"sleep_seconds": "0.5", "model": "gpt-5.4-mini"},
+                )
+
+        self.assertEqual(merged["max_rounds"], 7)
+        self.assertEqual(merged["max_total_tokens"], 9000)
+        self.assertEqual(merged["sleep_seconds"], "0.5")
+        self.assertEqual(merged["model"], "gpt-5.4-mini")
+
+
 class StartRunBindingInheritanceTests(unittest.TestCase):
     def test_start_run_inherits_base_agent_handle_when_omitted(self) -> None:
         with mock.patch.object(web_ui, "clone_container", return_value={"ok": True}) as clone_container, mock.patch.object(
@@ -371,6 +744,8 @@ class StartRunBindingInheritanceTests(unittest.TestCase):
                 model_settings={},
                 max_rounds=0,
                 sleep_seconds=1.0,
+                max_runtime_seconds=None,
+                max_total_tokens=None,
             )
 
         self.assertTrue(result["ok"])
@@ -399,6 +774,8 @@ class StartRunBindingInheritanceTests(unittest.TestCase):
                 model_settings={},
                 max_rounds=0,
                 sleep_seconds=1.0,
+                max_runtime_seconds=None,
+                max_total_tokens=None,
                 agent_handle="",
                 agent_handle_explicit=True,
             )
@@ -459,6 +836,129 @@ class StartContainerTests(unittest.TestCase):
         lxc_command.assert_not_called()
 
 
+class RetryLatestRunTests(unittest.TestCase):
+    def test_retry_latest_run_reuses_latest_run_configuration(self) -> None:
+        detail = {
+            "summary": {
+                "run_id": "run-old",
+                "container": "sandbox-1",
+                "mode": "task",
+                "model": "gpt-5.4",
+                "base_url": "https://example.com/v1",
+                "agent_handle": "writer-1",
+            },
+            "host_run": {
+                "task_prompt": "repair repo",
+                "max_rounds": 5,
+                "sleep_seconds": 2.0,
+                "max_runtime_seconds": 600,
+                "max_total_tokens": 12000,
+            },
+            "ui_launch": {
+                "mode": "task",
+                "model": "gpt-5.4",
+                "base_url": "https://example.com/v1",
+                "task_prompt": "repair repo",
+                "agent_handle": "writer-1",
+                "model_settings": {
+                    "profile_id": "default",
+                    "profile_label": "默认配置",
+                    "reasoning_effort": "high",
+                    "temperature": 0.2,
+                    "request_timeout_seconds": 120,
+                    "request_max_attempts": 4,
+                    "request_retry_delay_seconds": 2.0,
+                    "extra_body": {},
+                },
+                "max_rounds": 5,
+                "sleep_seconds": 2.0,
+                "max_runtime_seconds": 600,
+                "max_total_tokens": 12000,
+            },
+        }
+        with mock.patch.object(web_ui, "active_run_summary_for_container", return_value=None), mock.patch.object(
+            web_ui,
+            "latest_run_summary_for_container",
+            return_value={"run_id": "run-old", "container": "sandbox-1"},
+        ), mock.patch.object(
+            web_ui,
+            "run_detail",
+            return_value=detail,
+        ), mock.patch.object(
+            web_ui,
+            "resolve_run_model_config",
+            return_value={
+                "model": "gpt-5.4",
+                "base_url": "https://example.com/v1",
+                "api_key": "test-key",
+                "model_settings": {
+                    "profile_id": "default",
+                    "profile_label": "默认配置",
+                    "reasoning_effort": "high",
+                    "temperature": 0.2,
+                    "request_timeout_seconds": 120,
+                    "request_max_attempts": 4,
+                    "request_retry_delay_seconds": 2.0,
+                    "extra_body": {},
+                },
+                "profile": {"id": "default"},
+            },
+        ), mock.patch.object(
+            web_ui,
+            "launch_agent_for_container",
+            return_value={"ok": True, "launch": {"run_id": "run-new", "container": "sandbox-1"}},
+        ) as launch_agent_for_container:
+            result = web_ui.retry_latest_run_for_container("sandbox-1")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["retried_from_run_id"], "run-old")
+        self.assertEqual(launch_agent_for_container.call_args.kwargs["task_prompt"], "repair repo")
+        self.assertEqual(launch_agent_for_container.call_args.kwargs["max_rounds"], 5)
+        self.assertEqual(launch_agent_for_container.call_args.kwargs["max_runtime_seconds"], 600)
+        self.assertEqual(launch_agent_for_container.call_args.kwargs["max_total_tokens"], 12000)
+        self.assertEqual(launch_agent_for_container.call_args.kwargs["agent_handle"], "writer-1")
+
+    def test_retry_latest_run_rejects_when_active_run_exists(self) -> None:
+        with mock.patch.object(web_ui, "active_run_summary_for_container", return_value={"run_id": "run-live"}):
+            with self.assertRaises(ValueError):
+                web_ui.retry_latest_run_for_container("sandbox-1")
+
+    def test_retry_latest_run_rejects_when_api_key_fingerprint_changes(self) -> None:
+        detail = {
+            "summary": {"run_id": "run-old", "container": "sandbox-1", "mode": "task"},
+            "host_run": {"task_prompt": "repair repo"},
+            "ui_launch": {
+                "mode": "task",
+                "model": "gpt-5.4",
+                "base_url": "https://example.com/v1",
+                "task_prompt": "repair repo",
+                "api_key_fingerprint": "oldfingerprint",
+                "model_settings": {"profile_id": "default", "profile_label": "默认配置", "extra_body": {}},
+            },
+        }
+        with mock.patch.object(web_ui, "active_run_summary_for_container", return_value=None), mock.patch.object(
+            web_ui,
+            "latest_run_summary_for_container",
+            return_value={"run_id": "run-old", "container": "sandbox-1"},
+        ), mock.patch.object(
+            web_ui,
+            "run_detail",
+            return_value=detail,
+        ), mock.patch.object(
+            web_ui,
+            "resolve_run_model_config",
+            return_value={
+                "model": "gpt-5.4",
+                "base_url": "https://example.com/v1",
+                "api_key": "new-key",
+                "model_settings": {"profile_id": "default", "profile_label": "默认配置", "extra_body": {}},
+                "profile": {"id": "default"},
+            },
+        ):
+            with self.assertRaises(ValueError):
+                web_ui.retry_latest_run_for_container("sandbox-1")
+
+
 class DestroyContainerTests(unittest.TestCase):
     def test_destroy_container_removes_state_meta_after_success(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -496,6 +996,15 @@ class WebUiScriptTests(unittest.TestCase):
     def test_start_web_ui_background_command_passes_pythonpath_into_tmux_env(self) -> None:
         script = Path("scripts/start_web_ui.sh").read_text(encoding="utf-8")
         self.assertIn('PYTHONPATH=${PYTHONPATH@Q}', script)
+
+    def test_start_web_ui_script_detects_port_conflicts_before_claiming_success(self) -> None:
+        script = Path("scripts/start_web_ui.sh").read_text(encoding="utf-8")
+        self.assertIn('Port ${PORT} is already in use', script)
+        self.assertIn('wait_for_port', script)
+
+    def test_stop_web_ui_script_can_stop_host_web_ui_listener_without_tmux(self) -> None:
+        script = Path("scripts/stop_web_ui.sh").read_text(encoding="utf-8")
+        self.assertIn('Stopped Marathon Web UI listener pid', script)
 
 
 class StaticRouteResolutionTests(unittest.TestCase):
@@ -539,7 +1048,6 @@ class StaticHtmlContentTests(unittest.TestCase):
         self.assertIn("filterTabs", content)
         self.assertIn("featuredRow", content)
         self.assertIn("containerGrid", content)
-        self.assertIn("/design-lab/index.html", content)
         self.assertNotIn("启动任务模式", content)
         self.assertNotIn("taskPrompt", content)
         self.assertNotIn("primaryRunPanel", content)
@@ -561,18 +1069,30 @@ class StaticHtmlContentTests(unittest.TestCase):
         new_path = Path("host/static/new.html")
         agents_path = Path("host/static/agents.html")
         agent_path = Path("host/static/agent.html")
+        architecture_path = Path("host/static/architecture.html")
 
         self.assertTrue(container_path.exists(), f"missing expected file: {container_path}")
         self.assertTrue(new_path.exists(), f"missing expected file: {new_path}")
         self.assertTrue(agents_path.exists(), f"missing expected file: {agents_path}")
         self.assertTrue(agent_path.exists(), f"missing expected file: {agent_path}")
+        self.assertTrue(architecture_path.exists(), f"missing expected file: {architecture_path}")
 
         container_content = container_path.read_text(encoding="utf-8")
         new_content = new_path.read_text(encoding="utf-8")
         agents_content = agents_path.read_text(encoding="utf-8")
         agent_content = agent_path.read_text(encoding="utf-8")
+        architecture_content = architecture_path.read_text(encoding="utf-8")
 
         self.assertIn("容器详情", container_content)
+        self.assertIn("返回总览", container_content)
+        self.assertIn("retryAgentBtn", container_content)
+        self.assertIn("startContainerBtn", container_content)
+        self.assertIn("stopContainerBtn", container_content)
+        self.assertIn("restartContainerBtn", container_content)
+        self.assertIn("运行默认设置", container_content)
+        self.assertIn("containerSettingsForm", container_content)
+        self.assertIn("settingsMaxRuntimeMinutes", container_content)
+        self.assertIn("settingsMaxTotalTokens", container_content)
         self.assertIn("Round Timeline", container_content)
         self.assertIn("折叠的原始轨迹", container_content)
         self.assertIn("折叠的原始日志", container_content)
@@ -586,10 +1106,30 @@ class StaticHtmlContentTests(unittest.TestCase):
         self.assertNotIn("最新输出", container_content)
 
         self.assertIn("新建任务", new_content)
-        self.assertIn("从哪个容器复制", new_content)
+        self.assertIn("来源模板", new_content)
         self.assertIn("运行方式", new_content)
         self.assertIn("创建并开始", new_content)
+        self.assertIn("maxRoundsInput", new_content)
+        self.assertIn("sleepSecondsInput", new_content)
+        self.assertIn("maxRuntimeMinutesInput", new_content)
+        self.assertIn("maxTotalTokensInput", new_content)
         self.assertIn("agentHandle", new_content)
+        self.assertIn("模型配置", new_content)
+        self.assertIn("profileId", new_content)
+        self.assertIn("modelInput", new_content)
+        self.assertIn("baseUrlInput", new_content)
+        self.assertIn("apiKeyInput", new_content)
+        self.assertIn("高级参数", new_content)
+        self.assertIn("reasoningEffort", new_content)
+        self.assertIn("temperatureInput", new_content)
+        self.assertIn("topPInput", new_content)
+        self.assertIn("requestTimeoutSecondsInput", new_content)
+        self.assertIn("requestMaxAttemptsInput", new_content)
+        self.assertIn("requestRetryDelaySecondsInput", new_content)
+        self.assertIn("extraBodyInput", new_content)
+        self.assertIn("testConfigBtn", new_content)
+        self.assertIn("saveConfigBtn", new_content)
+        self.assertIn("testConfigBtn", new_content)
 
         self.assertIn("AI 账号", agents_content)
         self.assertIn("accountsGrid", agents_content)
@@ -608,7 +1148,30 @@ class StaticHtmlContentTests(unittest.TestCase):
         self.assertIn("bindAgentForm", container_content)
         self.assertIn("bindAgentHandle", container_content)
         self.assertIn("unbindAgentBtn", container_content)
-        self.assertIn("默认会跟随来源容器当前绑定的账号", new_content)
+
+        self.assertIn("Marathon 架构总览", architecture_content)
+        self.assertIn("Marathon Core", architecture_content)
+        self.assertIn("GitHub Pages", architecture_content)
+        self.assertIn("/api/overview", architecture_content)
+        self.assertIn("本地控制台", architecture_content)
+
+    def test_app_shell_assets_include_theme_toggle_support(self) -> None:
+        app_js = Path("host/static/app.js").read_text(encoding="utf-8")
+        app_css = Path("host/static/app.css").read_text(encoding="utf-8")
+
+        self.assertIn("THEME_PREFERENCE_KEY", app_js)
+        self.assertIn("themeToggleBtn", app_js)
+        self.assertIn("data-theme", app_css)
+        self.assertIn(".theme-toggle", app_css)
+
+    def test_app_shell_assets_include_theme_toggle_support(self) -> None:
+        app_js = Path("host/static/app.js").read_text(encoding="utf-8")
+        app_css = Path("host/static/app.css").read_text(encoding="utf-8")
+
+        self.assertIn("THEME_PREFERENCE_KEY", app_js)
+        self.assertIn("themeToggleBtn", app_js)
+        self.assertIn("data-theme", app_css)
+        self.assertIn(".theme-toggle", app_css)
 
 
 if __name__ == "__main__":
