@@ -1,4 +1,20 @@
 {
-  "generated_at": "2026-04-03T09:59:18+0800",
-  "live_runs": []
+  "generated_at": "2026-06-22T23:05:40+0800",
+  "live_runs": [
+    {
+      "public_run_id": "ingest-smoke-20260407",
+      "run_id": "ingest-smoke-20260407",
+      "title": "ingest-demo · ingest-smoke-20260407",
+      "container": "ingest-demo",
+      "agent_handle": null,
+      "agent_display_name": null,
+      "state": "running",
+      "is_live": true,
+      "mode": "task",
+      "updated_at": "2026-04-07T12:26:33+0800",
+      "round_count": 1,
+      "preview": "ingested via api",
+      "summary": "ingested via api"
+    }
+  ]
 }

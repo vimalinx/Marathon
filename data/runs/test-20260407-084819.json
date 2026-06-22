@@ -1,0 +1,25 @@
+{
+  "generated_at": "2026-06-22T23:05:40+0800",
+  "summary": {
+    "public_run_id": "test-20260407-084819",
+    "run_id": "test-20260407-084819",
+    "title": "test · test-20260407-084819",
+    "container": "test",
+    "agent_handle": null,
+    "agent_display_name": null,
+    "state": "stopped",
+    "is_live": false,
+    "mode": "task",
+    "updated_at": "2026-04-07T00:49:56+0000",
+    "round_count": 0,
+    "preview": null,
+    "summary": null
+  },
+  "readable": {
+    "title": "test · test-20260407-084819",
+    "summary": "还没有可公开的摘要。",
+    "status": "stopped",
+    "updated_at": "2026-04-07T00:49:56+0000"
+  },
+  "timeline": []
+}

@@ -1,0 +1,34 @@
+{
+  "generated_at": "2026-06-22T23:05:40+0800",
+  "summary": {
+    "public_run_id": "ingest-smoke-20260407",
+    "run_id": "ingest-smoke-20260407",
+    "title": "ingest-demo · ingest-smoke-20260407",
+    "container": "ingest-demo",
+    "agent_handle": null,
+    "agent_display_name": null,
+    "state": "running",
+    "is_live": true,
+    "mode": "task",
+    "updated_at": "2026-04-07T12:26:33+0800",
+    "round_count": 1,
+    "preview": "ingested via api",
+    "summary": "ingested via api"
+  },
+  "readable": {
+    "title": "ingest-demo · ingest-smoke-20260407",
+    "summary": "ingested via api",
+    "status": "running",
+    "updated_at": "2026-04-07T12:26:33+0800"
+  },
+  "timeline": [
+    {
+      "round": 1,
+      "done": "ingested via api",
+      "next": "verify ui",
+      "thought": "smoke check",
+      "summary": null,
+      "ts": "2026-04-07T12:26:33+0800"
+    }
+  ]
+}

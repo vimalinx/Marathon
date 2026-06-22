@@ -1,0 +1,25 @@
+{
+  "generated_at": "2026-06-22T23:05:40+0800",
+  "summary": {
+    "public_run_id": "ingest-auth-smoke",
+    "run_id": "ingest-auth-smoke",
+    "title": "ingest-auth-smoke",
+    "container": null,
+    "agent_handle": null,
+    "agent_display_name": null,
+    "state": "unknown",
+    "is_live": false,
+    "mode": "task",
+    "updated_at": null,
+    "round_count": 0,
+    "preview": null,
+    "summary": null
+  },
+  "readable": {
+    "title": "ingest-auth-smoke",
+    "summary": "还没有可公开的摘要。",
+    "status": "unknown",
+    "updated_at": null
+  },
+  "timeline": []
+}
